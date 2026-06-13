@@ -248,11 +248,13 @@ After step 5, **every future push to the app repo is fully automated** — no ma
 
 ### Phase 0 — Proxmox Foundation
 
-**Goal:** Both physical nodes running Proxmox VE, clustered together, manageable from one UI and reachable via Tailscale.
+**Goal:** Both physical nodes running Proxmox VE, each managed independently, reachable via Tailscale.
 
 > ⚠️ This wipes the existing Ubuntu install on both nodes. Nothing currently on them needs to be preserved (per current state — fresh nodes).
 
-**Per node:**
+> **Note:** pve1 and pve2 are deliberately **not** clustered together. Each runs its own independent Proxmox install with its own web UI/login. They don't share storage and never need to move VMs between each other, so linking them together would only add a "2-node majority vote" failure mode for no real benefit — bookmark both UIs separately instead.
+
+**Per node (repeat for both pve1 and pve2):**
 
 1. Download the Proxmox VE 8.x ISO (on Mac)
 2. Create a bootable USB (e.g. balenaEtcher)
@@ -269,16 +271,14 @@ After step 5, **every future push to the app repo is fully automated** — no ma
    - `apt update && apt full-upgrade -y`
 7. Install Tailscale on the Proxmox host itself (gives remote hypervisor console access later)
 
-**Cluster the two hosts:** 8. On pve1: Datacenter → Cluster → Create Cluster 9. Copy the join information 10. On pve2: Datacenter → Cluster → Join Cluster, paste join info 11. Verify both nodes show in the Datacenter view on either host's UI
-
 **Deliverables:**
 
-- `docs/proxmox-setup.md` — step-by-step with screenshots/notes, repo-fix commands, cluster join commands
+- `docs/proxmox-setup.md` — step-by-step with screenshots/notes, repo-fix commands
 - `scripts/00-proxmox-post-install.sh` — repo fix + Tailscale install, run via Proxmox host shell
 
 **Verify:**
 
-- `https://192.168.1.210:8006` and `https://192.168.1.211:8006` both show a 2-node cluster
+- `https://192.168.1.210:8006` and `https://192.168.1.211:8006` each load independently and show their own single node
 - Both hosts reachable via Tailscale from the Mac
 
 ---
