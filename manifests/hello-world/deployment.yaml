@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: hello-world
-          image: 192.168.1.245:5001/hello-world:latest
+          image: 192.168.1.245:5001/hello-world:2
           imagePullPolicy: Always
           ports:
             - containerPort: 80
