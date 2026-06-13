@@ -1,0 +1,49 @@
+# Jenkins Helm values for the k3s data platform.
+# Chart: jenkins/jenkins  (https://charts.jenkins.io)
+# Namespace: cicd
+#
+# Access: via `kubectl port-forward -n cicd svc/jenkins 8080:8080` for now
+# (MetalLB LB IP is not directly reachable from the Mac over WiFi). The
+# LoadBalancer service is still defined so it has a stable in-cluster identity
+# and can be reached over the LAN/Tailscale-subnet-router later.
+
+controller:
+  # The default installPlugins already includes: kubernetes, workflow-aggregator,
+  # git, configuration-as-code, git-client. Add what we need on top:
+  additionalPlugins:
+    - docker-workflow          # build/push Docker images from pipelines
+    - credentials-binding      # bind GitHub/registry creds in pipelines
+
+  serviceType: LoadBalancer
+  loadBalancerIP: 192.168.1.246
+  servicePort: 8080
+  jenkinsUrlProtocol: http
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+
+  # Keep the admin user/password in a chart-managed secret (retrieved below).
+  admin:
+    username: admin
+
+persistence:
+  enabled: true
+  storageClass: local-path
+  size: 8Gi
+
+# The Kubernetes plugin spawns ephemeral build agents as pods in-cluster.
+agent:
+  enabled: true
+  namespace: cicd
+  resources:
+    requests:
+      cpu: "256m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"

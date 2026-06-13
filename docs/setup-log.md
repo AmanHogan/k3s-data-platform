@@ -556,6 +556,132 @@ Verify with `sudo cat /etc/rancher/k3s/registries.yaml` on each.
 
 ---
 
+## Phase 2 (continued): Jenkins
+
+### Step 1: Install Jenkins via Helm into `cicd`
+
+Values in `platform/jenkins/values.yaml` (LoadBalancer `192.168.1.246:8080`, local-path
+persistence 8Gi, Kubernetes build agents in `cicd`, plus `docker-workflow` +
+`credentials-binding` plugins on top of the chart defaults).
+
+```bash
+helm repo add jenkins https://charts.jenkins.io
+helm repo update
+helm install jenkins jenkins/jenkins -n cicd -f platform/jenkins/values.yaml
+kubectl get pods -n cicd -w     # wait for jenkins-0 to reach 2/2 Running
+```
+
+> Gotcha: newer chart renamed `controller.adminUser` -> `controller.admin.username`.
+
+### Step 2: Access the Jenkins UI (Tailscale-only, durable)
+
+The MetalLB LoadBalancer IP (`192.168.1.246`) is not directly reachable from the Mac
+over WiFi (the L2/ARP issue). Instead, reach Jenkins via the **server node's Tailscale
+IP + the service NodePort** — works from home or anywhere, survives reboots, no
+port-forward needed and inherently Tailscale-only:
+
+```bash
+kubectl get svc -n cicd jenkins
+# PORT(S) shows 8080:<nodePort>/TCP  ->  open http://100.112.249.53:<nodePort>
+```
+
+Initial admin password (one time only — Jenkins state persists on the PVC afterward):
+
+```bash
+kubectl exec -n cicd svc/jenkins -c jenkins -- \
+  cat /run/secrets/additional/chart-admin-password && echo
+```
+
+Log in as `admin`. (This node-Tailscale-IP + NodePort pattern is how all admin UIs
+here — Jenkins, ArgoCD, Headlamp — are reached.)
+
+### Step 3: Add GitHub credentials
+
+1. GitHub -> Settings -> Developer settings -> Personal access tokens (classic) ->
+   generate a token with the `repo` scope.
+2. Jenkins -> Manage Jenkins -> Credentials -> System -> Global credentials ->
+   Add Credentials:
+   - Kind: `Username with password`
+   - Username: GitHub username (`AmanHogan`)
+   - Password: the `ghp_...` token
+   - ID: `github-pat`  (referenced by this ID in pipelines)
+
+---
+
+## Phase 2 (continued): hello-world test app + first pipeline
+
+### Step 1: Create the throwaway app repo
+
+Separate repo (not the infra repo): `github.com/AmanHogan/hello-world`. Local copy at
+`/Users/amanhogan/dev/hello-world`. Files:
+
+- `index.html` — static page served by nginx
+- `Dockerfile` — `nginx:1.27-alpine` + the page
+- `Jenkinsfile` — Kaniko build + push (below)
+
+`Jenkinsfile` builds with **Kaniko** (no Docker daemon / no privileged container) in an
+ephemeral Kubernetes agent pod and pushes to the in-cluster registry:
+
+```groovy
+agent {
+  kubernetes {
+    yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:v1.23.2-debug
+      command: ["sleep"]
+      args: ["infinity"]
+      tty: true
+'''
+  }
+}
+// ...
+/kaniko/executor --context "$(pwd)" --dockerfile Dockerfile \
+  --destination 192.168.1.245:5001/hello-world:${BUILD_NUMBER} \
+  --destination 192.168.1.245:5001/hello-world:latest \
+  --insecure --skip-tls-verify
+```
+
+(`--insecure --skip-tls-verify` because the registry is plain HTTP.)
+
+```bash
+cd /Users/amanhogan/dev/hello-world
+git init && git add -A && git commit -m "Initial hello-world app"
+git branch -M main
+git remote add origin https://github.com/AmanHogan/hello-world.git
+git push -u origin main
+```
+
+### Step 2: Create the Jenkins pipeline job
+
+Jenkins -> New Item -> name `hello-world` -> **Pipeline** -> OK. In the Pipeline section:
+
+- Definition: **Pipeline script from SCM**
+- SCM: Git
+- Repository URL: `https://github.com/AmanHogan/hello-world.git`
+- Credentials: `github-pat`
+- Branch Specifier: `*/main`
+- Script Path: `Jenkinsfile`
+
+Save -> **Build Now** -> watch Console Output.
+
+### Step 3: Verify the image landed in the registry
+
+Build finishes green (`Finished: SUCCESS`). From the server node:
+
+```bash
+ssh aman@192.168.1.200
+curl http://192.168.1.245:5001/v2/_catalog
+# {"repositories":["hello-world"]}
+```
+
+End-to-end build -> push loop confirmed working.
+
+---
+
 ## Status / Next Up
 
 - pve1 / pve2: complete — Proxmox installed, repo fixed (including ceph.list), Tailscale connected
@@ -566,5 +692,8 @@ Verify with `sudo cat /etc/rancher/k3s/registries.yaml` on each.
 - Namespaces created: `portfolio`, `data-platform`, `cicd`, `monitoring`
 - **Phase 1 done.**
 - In-cluster Docker registry (`cicd`, `registry:2`): complete — LoadBalancer `192.168.1.245:5001`, both nodes trust it via `registries.yaml`
+- Jenkins (`cicd`): complete — Helm install, accessed via node Tailscale IP + NodePort, `github-pat` credential added
+- hello-world test app (`github.com/AmanHogan/hello-world`): complete — Kaniko pipeline builds + pushes `192.168.1.245:5001/hello-world` to the registry, verified via `/v2/_catalog`
+- **CI half of the pipeline works (code -> image -> registry).**
 - **Open item:** shrink router DHCP range to end at `.239` (pool overlap)
-- **Next:** Jenkins (Helm into `cicd`, LoadBalancer/Tailscale-only, DinD) → ArgoCD → Headlamp → hello-world pipeline test
+- **Next:** ArgoCD (GitOps deploy half: registry image -> running pod) → Headlamp dashboard. Then wire hello-world's deploy manifests + ArgoCD Application to complete the full loop.
