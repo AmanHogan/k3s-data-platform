@@ -1,0 +1,23 @@
+# ArgoCD Application: watches manifests/hello-world in this infra repo and keeps
+# the cluster in sync with it. Apply this once; after that, any change you push
+# to those manifests auto-deploys.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hello-world
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/AmanHogan/k3s-data-platform.git
+    targetRevision: master
+    path: manifests/hello-world
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: hello-world
+  syncPolicy:
+    automated:
+      prune: true # delete resources you remove from Git
+      selfHeal: true # revert manual drift back to what Git says
+    syncOptions:
+      - CreateNamespace=true # auto-create the hello-world namespace
