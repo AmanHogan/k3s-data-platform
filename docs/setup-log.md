@@ -682,18 +682,215 @@ End-to-end build -> push loop confirmed working.
 
 ---
 
+## Phase 2 (continued): ArgoCD (GitOps deploy)
+
+### Step 1: Install ArgoCD
+
+```bash
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl get pods -n argocd -w     # wait for all ~7 pods Running
+```
+
+### Step 2: Expose the UI (NodePort, reached via node Tailscale IP)
+
+```bash
+kubectl patch svc argocd-server -n argocd -p '{"spec":{"type":"NodePort"}}'
+kubectl get svc argocd-server -n argocd   # note the 443:<nodePort>
+```
+
+UI at `https://100.112.249.53:<nodePort>` (self-signed cert — click through the warning).
+
+### Step 3: Log in
+
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath='{.data.password}' | base64 -d && echo
+```
+
+Username `admin` + that password.
+
+---
+
+## Phase 2 (continued): Deploy hello-world via ArgoCD + close the GitOps loop
+
+### Step 1: Deploy manifests in the infra repo
+
+- `manifests/hello-world/deployment.yaml` — runs `192.168.1.245:5001/hello-world:<tag>`
+- `manifests/hello-world/service.yaml` — NodePort
+- `argocd-apps/hello-world.yaml` — ArgoCD Application: watches `manifests/hello-world`
+  on `master`, deploys to namespace `hello-world`, `automated: {prune, selfHeal}`,
+  `CreateNamespace=true`
+
+Commit + push them, then register the Application (it auto-syncs):
+
+```bash
+git add manifests/ argocd-apps/ && git commit -m "Add hello-world deploy" && git push origin master
+kubectl apply -f argocd-apps/hello-world.yaml
+```
+
+App goes Synced/Healthy; pod runs; page at `http://100.112.249.53:<nodePort>`.
+
+### Step 2: Make it fully automatic (Jenkins writes the tag back to Git)
+
+Added a second stage to `hello-world`'s `Jenkinsfile`: a `git` container clones the
+infra repo, `sed`s the new unique build tag into `deployment.yaml`, and pushes. ArgoCD
+sees the manifest change and redeploys. Uses the `github-pat` Jenkins credential.
+
+Full loop, hands-off:
+
+```
+git push (app repo)
+  -> Jenkins: Kaniko build + push image:<build-number> to registry
+  -> Jenkins: update deployment.yaml tag + push to infra repo
+  -> ArgoCD: detect manifest change -> deploy new pod
+```
+
+> After this, Jenkins pushes commits to the infra repo `master`. Run
+> `git pull origin master` on the Mac before editing the infra repo to stay in sync.
+
+---
+
+## Phase 2 (continued): Headlamp dashboard
+
+### Step 1: Install (Helm, into kube-system)
+
+```bash
+helm repo add headlamp https://kubernetes-sigs.github.io/headlamp/
+helm repo update
+helm install headlamp headlamp/headlamp -n kube-system
+```
+
+### Step 2: Expose (NodePort)
+
+```bash
+kubectl patch svc headlamp -n kube-system -p '{"spec":{"type":"NodePort"}}'
+kubectl get svc headlamp -n kube-system   # note the nodePort
+```
+
+### Step 3: Login token (cluster-admin service account)
+
+`platform/headlamp/headlamp-admin.yaml` defines a `headlamp-admin` ServiceAccount +
+cluster-admin ClusterRoleBinding.
+
+```bash
+kubectl apply -f platform/headlamp/headlamp-admin.yaml
+kubectl create token headlamp-admin -n kube-system --duration=8760h
+```
+
+Open the URL, paste the token.
+
+---
+
+## Access cheat sheet (all Tailscale-only, via the server node's Tailscale IP)
+
+Server node Tailscale IP: `100.112.249.53`. NodePorts are assigned by Kubernetes and
+stable across restarts — re-check any with `kubectl get svc -n <ns> <name>`.
+
+| Service          | URL                          | Notes                       |
+| ---------------- | ---------------------------- | --------------------------- |
+| hello-world site | http://100.112.249.53:32543  | the demo app                |
+| Jenkins          | http://100.112.249.53:32430  | admin                       |
+| ArgoCD           | https://100.112.249.53:30789 | admin (self-signed cert)    |
+| Headlamp         | http://100.112.249.53:32526  | paste service-account token |
+
+Initial passwords/tokens:
+
+```bash
+# Jenkins admin password (one-time)
+kubectl exec -n cicd svc/jenkins -c jenkins -- cat /run/secrets/additional/chart-admin-password && echo
+# ArgoCD admin password
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d && echo
+# Headlamp token (regenerate anytime)
+kubectl create token headlamp-admin -n kube-system --duration=8760h
+```
+
+---
+
+## Phase 3: Cloudflare Tunnel (public access for hello-world)
+
+### Step 1: Register a domain via Cloudflare
+
+dash.cloudflare.com -> Domain Registration -> Register a Domain. Registering
+through Cloudflare directly auto-adds it to the account as a zone (no separate
+nameserver-pointing step needed).
+
+### Step 2: Create a Tunnel
+
+one.dash.cloudflare.com (Zero Trust dashboard) -> Networks -> Tunnels -> Create a
+tunnel -> connector type **Cloudflared** -> name it (e.g. `k3s-homelab`) -> Save.
+On the "install connector" page, copy the tunnel **token** (`eyJ...`) — used to
+authenticate the in-cluster connector. Don't run the shown docker command; deploy
+as a k8s pod instead (next step).
+
+### Step 3: Deploy cloudflared in-cluster
+
+`platform/cloudflare/cloudflared.yaml` — namespace `cloudflare` + a Deployment
+running `cloudflare/cloudflared:latest`, reading the tunnel token from a Secret.
+
+```bash
+kubectl create namespace cloudflare
+kubectl create secret generic cloudflared-token -n cloudflare \
+  --from-literal=token='<tunnel token from dashboard>'
+kubectl apply -f platform/cloudflare/cloudflared.yaml
+kubectl get pods -n cloudflare -w     # wait for Running
+```
+
+Tunnel shows **Healthy** in the Zero Trust dashboard once the pod is up.
+
+### Step 4: Route a public hostname to hello-world
+
+Tunnel -> **Public Hostname** tab -> Add a public hostname:
+- Subdomain/domain: pick the hostname (e.g. blank for root, or `hello.<domain>`)
+- Service Type: `HTTP`
+- Service URL: `hello-world.hello-world.svc.cluster.local:80` (in-cluster Service
+  DNS — `cloudflared` runs inside the cluster so it resolves this directly)
+
+Save — Cloudflare auto-creates the DNS record (CNAME to `<tunnel-id>.cfargotunnel.com`,
+not to a home IP, so it survives IP changes / moving).
+
+### Step 5: Verify
+
+`https://<hostname>` loads the hello-world page, valid HTTPS (Cloudflare cert), from
+any network (test on cellular, not home WiFi, for a true public-access check).
+
+> Note: immediately after going live, Cloudflare Analytics will show traffic from
+> scanners/bots worldwide (e.g. Switzerland, Japan, Finland, Germany) — this is
+> normal internet background noise (Certificate Transparency logs broadcast new
+> certs the instant they're issued, and bots scan continuously). Not a sign of
+> compromise; happens to every new public site.
+
+### Step 6: Security hardening (Cloudflare dashboard, one-time)
+
+- **2FA on the Cloudflare account** (Profile -> Authentication) — most important,
+  the account now controls DNS + tunnel routing into the home network.
+- **SSL/TLS -> Edge Certificates -> Always Use HTTPS** -> On
+- **SSL/TLS -> Overview** -> mode `Full` or `Full (strict)`
+- **Security -> Bots -> Bot Fight Mode** -> On
+- Confirm the tunnel's Public Hostname list contains **only** the intended
+  hostname(s) — no accidental wildcards exposing other in-cluster services.
+- (Later, when the real portfolio site is up) consider rate-limiting rules and a
+  default-deny WAF rule before adding further public hostnames.
+
+---
+
 ## Status / Next Up
 
-- pve1 / pve2: complete — Proxmox installed, repo fixed (including ceph.list), Tailscale connected
-- **Phase 0 done.**
-- k3s-server VM (pve1, `192.168.1.200`, Tailscale `100.112.249.53`) + k3s-agent VM (pve2, `192.168.1.201`): complete — Ubuntu 22.04, qemu-guest-agent, swap disabled, Tailscale, k3s installed/joined
-- kubectl on Mac: via `~/.kube/config` pointed at k3s-server's Tailscale IP (`100.112.249.53`)
-- MetalLB: pool `192.168.1.240-250` + L2Advertisement applied; Traefik on `.240`
-- Namespaces created: `portfolio`, `data-platform`, `cicd`, `monitoring`
-- **Phase 1 done.**
-- In-cluster Docker registry (`cicd`, `registry:2`): complete — LoadBalancer `192.168.1.245:5001`, both nodes trust it via `registries.yaml`
-- Jenkins (`cicd`): complete — Helm install, accessed via node Tailscale IP + NodePort, `github-pat` credential added
-- hello-world test app (`github.com/AmanHogan/hello-world`): complete — Kaniko pipeline builds + pushes `192.168.1.245:5001/hello-world` to the registry, verified via `/v2/_catalog`
-- **CI half of the pipeline works (code -> image -> registry).**
-- **Open item:** shrink router DHCP range to end at `.239` (pool overlap)
-- **Next:** ArgoCD (GitOps deploy half: registry image -> running pod) → Headlamp dashboard. Then wire hello-world's deploy manifests + ArgoCD Application to complete the full loop.
+**Phases 0, 1, 2, 3 complete — the core platform is fully stood up, proven end-to-end, and publicly reachable.**
+
+- **Phase 0 (Proxmox):** pve1 + pve2 installed, repos fixed (incl. ceph.list), Tailscale.
+- **Phase 1 (k3s + cluster):** k3s-server (`192.168.1.200` / Tailscale `100.112.249.53`) + k3s-agent (`192.168.1.201`), Ubuntu 22.04, swap off, qemu-guest-agent; Mac kubectl via Tailscale IP; MetalLB pool `.240-.250` (Traefik on `.240`); namespaces `portfolio`/`data-platform`/`cicd`/`monitoring`.
+- **Phase 2 (CI/CD):** in-cluster registry (`192.168.1.245:5001`, trusted on both nodes); Jenkins (Kaniko builds); ArgoCD (GitOps deploy); Headlamp dashboard. hello-world proves the **full automatic loop**: push code → build → registry → manifest bump → ArgoCD deploy.
+- **Phase 3 (Public access):** domain registered via Cloudflare; `cloudflared` tunnel (`platform/cloudflare/cloudflared.yaml`, namespace `cloudflare`) routes a public hostname -> `hello-world.hello-world.svc.cluster.local:80`. Verified live with valid HTTPS from outside the home network. Account hardening done (2FA, Always Use HTTPS, Full(strict) TLS, Bot Fight Mode).
+
+**Open items / housekeeping:**
+
+- Shrink router DHCP range to end at `.239` (currently overlaps the MetalLB pool `.240-.250`).
+- `hello-world` is throwaway scaffolding — can be deleted (and its public hostname re-pointed) once the real portfolio site is built.
+- If/when moving locations: Tailscale (`100.x.x.x`) and the Cloudflare Tunnel both survive unchanged (outbound-only / coordination-based). The thing to watch is the LAN subnet (`192.168.1.x`) — configure the new router to keep the same `192.168.1.0/24` range to avoid reconfiguring Proxmox/k3s/MetalLB static IPs.
+
+**Next (all optional / on your schedule):**
+
+- **Phase 4** — the real portfolio site (first production app, same pipeline pattern as hello-world; swap the Cloudflare Tunnel's public hostname to point at it).
+- **Phases 5-9** — data platform (MinIO, Kafka, Spark/Delta, JupyterHub, MLflow).
+- **Phase 10** — observability (Prometheus/Grafana/Loki) — deferred; Proxmox dashboard covers node metrics for now.

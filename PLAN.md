@@ -246,7 +246,19 @@ After step 5, **every future push to the app repo is fully automated** — no ma
 
 ## Phases
 
-### Phase 0 — Proxmox Foundation
+> **Progress (see `docs/setup-log.md` for the exact steps actually run):**
+> Phases 0, 1, 2 are **COMPLETE** — Proxmox on both nodes, k3s cluster, MetalLB,
+> in-cluster registry, Jenkins (Kaniko), ArgoCD, and Headlamp are all up, with a
+> hello-world app proving the full automatic loop (push -> build -> registry ->
+> manifest bump -> ArgoCD deploy). Phase 3 is **COMPLETE for hello-world** —
+> domain registered via Cloudflare, `cloudflared` tunnel deployed in-cluster
+> (`platform/cloudflare/cloudflared.yaml`), public hostname routed to
+> hello-world, verified live over HTTPS, account hardening done (2FA, Always
+> Use HTTPS, Full(strict) TLS, Bot Fight Mode). Phase 4+ are not started; the
+> portfolio site (Phase 4) will get its own public hostname via the same tunnel.
+> Open item: shrink router DHCP range to end at `.239` (overlaps MetalLB `.240-.250`).
+
+### Phase 0 — Proxmox Foundation  **(DONE)**
 
 **Goal:** Both physical nodes running Proxmox VE, each managed independently, reachable via Tailscale.
 
@@ -283,7 +295,7 @@ After step 5, **every future push to the app repo is fully automated** — no ma
 
 ---
 
-### Phase 1 — k3s VMs + Cluster Bootstrap
+### Phase 1 — k3s VMs + Cluster Bootstrap  **(DONE)**
 
 **Goal:** k3s running inside VMs on both Proxmox hosts, manageable from the Mac via kubectl.
 
@@ -340,7 +352,7 @@ After step 5, **every future push to the app repo is fully automated** — no ma
 
 ---
 
-### Phase 2 — CI/CD Pipeline (Jenkins + Registry + ArgoCD)
+### Phase 2 — CI/CD Pipeline (Jenkins + Registry + ArgoCD)  **(DONE — Headlamp included)**
 
 **Goal:** Push to GitHub → Jenkins builds in-cluster → image lands in registry → ArgoCD deploys. No Docker on the Mac.
 
@@ -375,20 +387,22 @@ After step 5, **every future push to the app repo is fully automated** — no ma
 
 ---
 
-### Phase 3 — Remote & Public Access (Tailscale verification + Cloudflare)
+### Phase 3 — Remote & Public Access (Tailscale verification + Cloudflare)  **(DONE for hello-world)**
 
 **Goal:** Confirm Tailscale access end-to-end, then expose the (future) portfolio site publicly via Cloudflare.
 
 1. Confirm Tailscale access to: both Proxmox UIs, kubectl, Headlamp, Jenkins, ArgoCD — all from a non-LAN network (e.g. phone hotspot)
-2. Add domain to Cloudflare (if not already)
-3. Deploy `cloudflared` in-cluster, create a tunnel pointing at Traefik
-4. Configure DNS: `<yourdomain>` → tunnel (will route to the portfolio site once deployed in Phase 4)
-5. Confirm everything _except_ the portfolio hostname stays Tailscale-only (no public DNS records for ArgoCD/Jenkins/Grafana/etc.)
+2. Add domain to Cloudflare (if not already) — **done**, domain registered via Cloudflare Registrar
+3. Deploy `cloudflared` in-cluster, create a tunnel pointing at Traefik — **done**, see `platform/cloudflare/cloudflared.yaml` (namespace `cloudflare`)
+4. Configure DNS: `<yourdomain>` → tunnel (currently routed to hello-world; will be re-pointed to the portfolio site once it's deployed in Phase 4)
+5. Confirm everything _except_ the public hostname stays Tailscale-only (no public DNS records for ArgoCD/Jenkins/Grafana/etc.) — **confirmed**
+
+**Status:** Cloudflare Tunnel is live and serving hello-world over HTTPS publicly. Account hardening done (2FA, Always Use HTTPS, SSL/TLS Full(strict), Bot Fight Mode). Remaining: re-point the Public Hostname to the real portfolio site in Phase 4, and do a full non-LAN (phone hotspot) pass confirming Tailscale access to Proxmox UIs/kubectl/Headlamp/Jenkins/ArgoCD.
 
 **Deliverables:**
 
-- `platform/cloudflare/cloudflared.yaml` — Deployment + tunnel config (credentials as a gitignored Secret + `.example`)
-- `docs/remote-access.md` — Tailscale device list, Cloudflare tunnel routing table
+- `platform/cloudflare/cloudflared.yaml` — Deployment + tunnel config (token-based, via gitignored Secret `cloudflared-token`)
+- `docs/remote-access.md` — Tailscale device list, Cloudflare tunnel routing table (still TODO if you want it written up separately from setup-log.md)
 
 **Verify:**
 

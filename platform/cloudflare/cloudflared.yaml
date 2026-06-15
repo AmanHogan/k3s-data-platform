@@ -1,0 +1,50 @@
+# Cloudflare Tunnel connector. Makes an OUTBOUND connection to Cloudflare's edge
+# (no inbound ports opened, home IP never exposed). Public hostname -> service
+# routing is configured in the Zero Trust dashboard (Networks -> Tunnels ->
+# k3s-homelab -> Public Hostname), not in this file.
+#
+# Requires a Secret "cloudflared-token" with key "token" — created via:
+#   kubectl create secret generic cloudflared-token -n cloudflare \
+#     --from-literal=token=<paste tunnel token from dashboard>
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudflare
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: cloudflare
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflared-token
+                  key: token
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
