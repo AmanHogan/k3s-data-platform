@@ -1,0 +1,79 @@
+# Single-instance MongoDB for the portfolio namespace.
+# Data is persisted on a local-path PVC on whichever node this pod is scheduled.
+#
+# Connection string for apps in the same namespace:
+#   mongodb://mongodb.portfolio.svc.cluster.local:27017/<dbname>
+#
+# This is intentionally simple (no replica set, no auth required inside the cluster)
+# because it only accepts connections from inside the cluster. Add MongoDB auth if
+# you ever expose it outside the cluster or add multi-tenant data.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-data
+  namespace: portfolio
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb
+  namespace: portfolio
+  labels:
+    app: mongodb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  strategy:
+    # Recreate instead of RollingUpdate — only one pod can hold the PVC at a time
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:7
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mongodb-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  namespace: portfolio
+  labels:
+    app: mongodb
+spec:
+  type: ClusterIP
+  selector:
+    app: mongodb
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017
+      protocol: TCP

@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: commitments
+  namespace: portfolio
+  labels:
+    app: commitments
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: commitments
+  template:
+    metadata:
+      labels:
+        app: commitments
+    spec:
+      containers:
+        - name: commitments
+          image: 192.168.1.245:5001/commitments:1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          env:
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: commitments-secrets
+                  key: MONGODB_URI
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: commitments-secrets
+                  key: AUTH_SECRET
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
