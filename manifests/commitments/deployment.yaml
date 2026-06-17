@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: commitments
-          image: 192.168.1.245:5001/commitments:2
+          image: 192.168.1.245:5001/commitments:3
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
