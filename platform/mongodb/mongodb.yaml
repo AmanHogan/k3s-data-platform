@@ -1,25 +1,13 @@
-# Single-instance MongoDB for the portfolio namespace.
-# Data is persisted on a local-path PVC on whichever node this pod is scheduled.
+# Single-instance MongoDB for the commitments namespace.
+# Data is persisted on the `mongodb-data` PVC, which lives in its OWN file
+# (pvc.yaml) so deleting this Deployment/Service never deletes the data.
 #
 # Connection string for apps in the same namespace:
-#   mongodb://mongodb.portfolio.svc.cluster.local:27017/<dbname>
+#   mongodb://mongodb.commitments.svc.cluster.local:27017/<dbname>
 #
 # This is intentionally simple (no replica set, no auth required inside the cluster)
 # because it only accepts connections from inside the cluster. Add MongoDB auth if
 # you ever expose it outside the cluster or add multi-tenant data.
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mongodb-data
-  namespace: commitments
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: local-path
-  resources:
-    requests:
-      storage: 5Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
