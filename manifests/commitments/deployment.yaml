@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: commitments
-  namespace: portfolio
+  namespace: commitments
   labels:
     app: commitments
 spec:

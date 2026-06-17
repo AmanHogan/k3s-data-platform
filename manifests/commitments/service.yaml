@@ -2,12 +2,12 @@ apiVersion: v1
 kind: Service
 metadata:
   name: commitments
-  namespace: portfolio
+  namespace: commitments
   labels:
     app: commitments
 spec:
   # ClusterIP — Cloudflare Tunnel reaches this via in-cluster DNS:
-  #   commitments.portfolio.svc.cluster.local:3000
+  #   commitments.commitments.svc.cluster.local:3000
   # No public LoadBalancer or NodePort needed.
   type: ClusterIP
   selector:

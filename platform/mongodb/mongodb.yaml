@@ -12,7 +12,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: mongodb-data
-  namespace: portfolio
+  namespace: commitments
 spec:
   accessModes:
     - ReadWriteOnce
@@ -25,7 +25,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mongodb
-  namespace: portfolio
+  namespace: commitments
   labels:
     app: mongodb
 spec:
@@ -65,7 +65,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: mongodb
-  namespace: portfolio
+  namespace: commitments
   labels:
     app: mongodb
 spec:

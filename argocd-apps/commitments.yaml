@@ -14,7 +14,7 @@ spec:
     path: manifests/commitments
   destination:
     server: https://kubernetes.default.svc
-    namespace: portfolio
+    namespace: commitments
   syncPolicy:
     automated:
       prune: true
