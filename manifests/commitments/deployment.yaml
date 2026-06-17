@@ -22,6 +22,11 @@ spec:
           ports:
             - containerPort: 3000
           env:
+            # NextAuth v5 runs behind the Cloudflare Tunnel (a reverse proxy), so
+            # it must be told to trust the forwarded Host header. Without this it
+            # throws UntrustedHost / "problem with the server configuration".
+            - name: AUTH_TRUST_HOST
+              value: "true"
             - name: MONGODB_URI
               valueFrom:
                 secretKeyRef:
