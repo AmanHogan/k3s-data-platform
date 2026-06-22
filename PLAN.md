@@ -257,6 +257,10 @@ After step 5, **every future push to the app repo is fully automated** — no ma
 > Use HTTPS, Full(strict) TLS, Bot Fight Mode). Phase 4+ are not started; the
 > portfolio site (Phase 4) will get its own public hostname via the same tunnel.
 > Open item: shrink router DHCP range to end at `.239` (overlaps MetalLB `.240-.250`).
+>
+> **Building Phases 5–9 yourself?** See [`docs/learning-path.md`](docs/learning-path.md) —
+> a learning-first roadmap pairing each phase with concepts, curated references, and
+> "you've-learned-it-when" milestones (MinIO → Kafka → Spark/Delta → JupyterHub → MLflow).
 
 ### Phase 0 — Proxmox Foundation  **(DONE)**
 
