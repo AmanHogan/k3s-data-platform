@@ -874,23 +874,124 @@ any network (test on cellular, not home WiFi, for a true public-access check).
 
 ---
 
+## Phase 4: First real app — commitments (Next.js + MongoDB)
+
+The `hello-world` scaffold proved the pipeline; the **commitments** app (separate repo
+`/Users/amanhogan/dev/commitments`, a Next.js 16 + NextAuth + MongoDB productivity app)
+became the first real production workload on the same pipeline. `hello-world` was then
+removed (its namespace is now empty).
+
+### Step 1: Containerize the Next.js app
+
+In the commitments repo:
+- `next.config.ts` → `output: 'standalone'` (minimal production server bundle).
+- `Dockerfile` — multi-stage (deps → build → minimal `node:20-alpine` runner, non-root).
+- `Jenkinsfile` — identical 2-stage pattern to hello-world (Kaniko build+push to
+  `192.168.1.245:5001/commitments`, then git-container bumps the image tag in this infra
+  repo's `manifests/commitments/deployment.yaml`).
+
+### Step 2: MongoDB in-cluster (namespace `commitments`)
+
+`platform/mongodb/` — split into:
+- `pvc.yaml` — the data PVC, kept in its **own file** so `kubectl delete -f mongodb.yaml`
+  can never delete the data.
+- `mongodb.yaml` — Deployment + Service. **Pinned to `mongo:4.4`** — MongoDB 5.0+ requires
+  AVX, which the HP ProDesk CPUs lack (5.0+ crashes on startup).
+- `backup-cronjob.yaml` — daily `mongodump` (03:00 America/Chicago), keeps last 7 archives,
+  **pinned via nodeSelector to k3s-server** so backups land on the *other* node from the
+  live data (which is on k3s-agent). Verified by a manual test run.
+- The bound data PV's reclaim policy was patched `Delete` → **`Retain`** (a live
+  `kubectl patch pv`, not a manifest) so deleting the PVC won't wipe the data.
+
+### Step 3: Secrets + NextAuth behind the tunnel
+
+```bash
+kubectl create namespace commitments
+kubectl create secret generic commitments-secrets -n commitments \
+  --from-literal=MONGODB_URI=mongodb://mongodb.commitments.svc.cluster.local:27017/commitments \
+  --from-literal=AUTH_SECRET=$(openssl rand -base64 32)
+```
+- `manifests/commitments/deployment.yaml` sets **`AUTH_TRUST_HOST=true`** — NextAuth v5
+  rejects the forwarded `Host` header behind a reverse proxy (the Cloudflare Tunnel)
+  without it ("UntrustedHost" / "problem with the server configuration").
+- App code fix: `src/lib/db.ts` reads `MONGODB_URI` lazily (was throwing at import time,
+  which broke `next build` page-data collection) and clears a failed connection promise so
+  it can reconnect.
+
+### Step 4: GitOps + public hostname
+
+- `argocd-apps/commitments.yaml` — ArgoCD Application watching `manifests/commitments`
+  (namespace `commitments`, auto-create/prune/self-heal). Status: **Synced / Healthy**.
+- Cloudflare Tunnel: added a public hostname `commitments.amanhogan.com` →
+  `http://commitments.commitments.svc.cluster.local:3000`. (Public exposure is a per-app
+  choice toggled in the Cloudflare Zero Trust dashboard.)
+
+---
+
+## Phase 5: MinIO object storage (data lake)
+
+First piece of the data platform — S3-compatible object store, the foundation that Kafka,
+Spark/Delta, JupyterHub, and MLflow all read/write.
+
+### Step 1: Root credentials secret
+
+```bash
+kubectl create secret generic minio-root -n data-platform \
+  --from-literal=rootUser=admin \
+  --from-literal=rootPassword="$(openssl rand -base64 24)"   # SAVE the generated value
+```
+`platform/minio/minio-secret.yaml.example` documents the shape (keys `rootUser` /
+`rootPassword`); the real secret lives only in the cluster.
+
+### Step 2: Install via Helm (pinned version)
+
+`platform/minio/values.yaml` — `mode: standalone`, `existingSecret: minio-root`,
+20Gi `local-path` PVC, modest resources (256Mi req / 1Gi limit), `service` + `consoleService`
+as **NodePort**, and four auto-created buckets.
+
+```bash
+helm repo add minio https://charts.min.io/
+helm install minio minio/minio --version 5.4.0 -n data-platform -f platform/minio/values.yaml
+```
+> **Version pinned on purpose** (`--version 5.4.0`): without it, `helm install` grabs
+> "latest", which makes the deployment non-reproducible. The chart name + version +
+> `values.yaml` together are the full reproducible spec.
+
+### Step 3: Verify
+
+- Pod `1/1 Running`; PVC bound on **k3s-agent** at
+  `/var/lib/rancher/k3s/storage/pvc-…_minio` (local-path, node-pinned).
+- Buckets auto-created by the chart's post-install `mc` job: `raw-data`, `processed-data`,
+  `mlflow-artifacts`, `backups`.
+- **Access (Tailscale-only):** S3 API `100.112.249.53:32000`, Console `…:32001`.
+- Milestone proven: from the Mac, `mc alias set homelab http://100.112.249.53:32000 …`,
+  then `mc cp` a CSV into `raw-data` and `mc cat` it back. The endpoint + access-key +
+  secret **triplet** is what every later S3 client (Spark S3A, MLflow, boto3) will reuse.
+
+---
+
 ## Status / Next Up
 
-**Phases 0, 1, 2, 3 complete — the core platform is fully stood up, proven end-to-end, and publicly reachable.**
+**Phases 0–5 complete. Core platform + CI/CD + public access are proven end-to-end; the first real app (commitments) is deployed via GitOps; MinIO is the first data-platform brick.**
 
 - **Phase 0 (Proxmox):** pve1 + pve2 installed, repos fixed (incl. ceph.list), Tailscale.
-- **Phase 1 (k3s + cluster):** k3s-server (`192.168.1.200` / Tailscale `100.112.249.53`) + k3s-agent (`192.168.1.201`), Ubuntu 22.04, swap off, qemu-guest-agent; Mac kubectl via Tailscale IP; MetalLB pool `.240-.250` (Traefik on `.240`); namespaces `portfolio`/`data-platform`/`cicd`/`monitoring`.
-- **Phase 2 (CI/CD):** in-cluster registry (`192.168.1.245:5001`, trusted on both nodes); Jenkins (Kaniko builds); ArgoCD (GitOps deploy); Headlamp dashboard. hello-world proves the **full automatic loop**: push code → build → registry → manifest bump → ArgoCD deploy.
-- **Phase 3 (Public access):** domain registered via Cloudflare; `cloudflared` tunnel (`platform/cloudflare/cloudflared.yaml`, namespace `cloudflare`) routes a public hostname -> `hello-world.hello-world.svc.cluster.local:80`. Verified live with valid HTTPS from outside the home network. Account hardening done (2FA, Always Use HTTPS, Full(strict) TLS, Bot Fight Mode).
+- **Phase 1 (k3s + cluster):** k3s-server (`192.168.1.200` / Tailscale `100.112.249.53`) + k3s-agent (`192.168.1.201`), Ubuntu 22.04, swap off, qemu-guest-agent; Mac kubectl via Tailscale IP; MetalLB pool `.240-.250` (Traefik on `.240`); namespaces `data-platform`/`cicd`/`monitoring` (+ `commitments`, `cloudflare` added later).
+- **Phase 2 (CI/CD):** in-cluster registry (`192.168.1.245:5001`, trusted on both nodes); Jenkins (Kaniko builds); ArgoCD (GitOps deploy); Headlamp dashboard. **Full automatic loop** proven: push code → build → registry → manifest bump → ArgoCD deploy.
+- **Phase 3 (Public access):** domain `amanhogan.com` registered via Cloudflare; `cloudflared` tunnel (`platform/cloudflare/cloudflared.yaml`, namespace `cloudflare`). Verified live with valid HTTPS from outside the home network. Account hardening done (2FA, Always Use HTTPS, Full(strict) TLS, Bot Fight Mode).
+- **Phase 4 (First real app):** **commitments** (Next.js + MongoDB 4.4 + daily off-node backups) deployed via the pipeline + ArgoCD (`Synced/Healthy`); `hello-world` scaffold removed. Public hostname `commitments.amanhogan.com` available via the tunnel.
+- **Phase 5 (MinIO):** S3 object store in `data-platform` (Helm chart `minio/minio` 5.4.0, pinned), 20Gi local-path PVC on k3s-agent, 4 buckets, NodePort (API `:32000`, Console `:32001`), Tailscale-only. `mc` copy/read test passed.
 
 **Open items / housekeeping:**
 
 - Shrink router DHCP range to end at `.239` (currently overlaps the MetalLB pool `.240-.250`).
-- `hello-world` is throwaway scaffolding — can be deleted (and its public hostname re-pointed) once the real portfolio site is built.
+- MinIO data is a single local-path copy on k3s-agent (no backups yet) — fine for reproducible `raw-data`, but add a backup story before anything irreplaceable lands there.
 - If/when moving locations: Tailscale (`100.x.x.x`) and the Cloudflare Tunnel both survive unchanged (outbound-only / coordination-based). The thing to watch is the LAN subnet (`192.168.1.x`) — configure the new router to keep the same `192.168.1.0/24` range to avoid reconfiguring Proxmox/k3s/MetalLB static IPs.
 
-**Next (all optional / on your schedule):**
+**Next (data platform — being built self-guided; see `docs/learning-path.md`):**
 
-- **Phase 4** — the real portfolio site (first production app, same pipeline pattern as hello-world; swap the Cloudflare Tunnel's public hostname to point at it).
-- **Phases 5-9** — data platform (MinIO, Kafka, Spark/Delta, JupyterHub, MLflow).
+- **Phase 6** — Kafka (KRaft, 1 broker) — streaming ingestion.
+- **Phase 7** — Spark + Delta Lake — the core learning goal (reads/writes Delta on MinIO).
+- **Phase 8** — JupyterHub — query the Delta table from a notebook.
+- **Phase 9** — MLflow (+ Postgres) — experiment tracking, artifacts in MinIO.
+- **Portfolio site** — the real public-facing app that links to / showcases the data platform.
 - **Phase 10** — observability (Prometheus/Grafana/Loki) — deferred; Proxmox dashboard covers node metrics for now.
