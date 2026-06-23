@@ -1,0 +1,56 @@
+# MinIO (object storage / data lake) — Helm values for the minio/minio chart (v5.4.0).
+# Namespace: data-platform
+#
+# Standalone or Distributed
+mode: standalone
+
+# Never hardcode rootUser/rootPassword in this file. Instead point at a Secret
+# you create with kubectl (gitignored), exactly like MongoDB/cloudflared.
+# The chart expects the Secret to have keys: rootUser, rootPassword.
+existingSecret: minio-root
+
+# Persistence
+persistence:
+  enabled: true
+  storageClass: local-path
+  accessMode: ReadWriteOnce
+  size: 20Gi
+
+# Resources
+# MinIO is mostly idle here
+resources:
+  requests:
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# Exposure
+# MinIO serves TWO ports: the S3 API (apps/mc talk here) and the web Console (you
+# click around here). This chart splits them into two Services.
+# Recommended: NodePort, reached via k3s-server's Tailscale IP (100.112.249.53) —
+# same durable, Tailscale-only pattern as Jenkins/ArgoCD/Headlamp. (Leave nodePort
+# unset to let k3s pick one in the 30000–32767 range, or pin your own.)
+service: # the S3 API
+  type: NodePort
+consoleService: # the web Console UI
+  type: NodePort
+
+# Buckets to auto-create on first boot
+# The chart can create buckets for you. These four match my platform plan.
+buckets:
+  - name: raw-data
+    policy: none
+    purge: false
+  - name: processed-data
+    policy: none
+    purge: false
+  - name: mlflow-artifacts
+    policy: none
+    purge: false
+  - name: backups
+    policy: none
+    purge: false
+
+#  Misc sane defaults
+# Turn off the chart's bundled metrics/extras you don't need yet.
+replicas: 1
