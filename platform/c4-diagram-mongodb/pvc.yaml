@@ -1,0 +1,21 @@
+# ⚠️  THIS PVC HOLDS YOUR LIVE C4-DIAGRAM MONGODB DATA. ⚠️
+#
+# Kept in its OWN file, separate from the Deployment/Service, so that a
+# `kubectl delete -f mongodb.yaml` can never delete the data along with the
+# workload. Only ever delete this PVC if you truly mean to destroy the data.
+#
+# Remember to patch the bound PV's reclaim policy to `Retain` once bound (see
+# setup-log.md for the commitments precedent), so even deleting this PVC
+# leaves the underlying data on disk for manual recovery.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-data
+  namespace: c4-diagram
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi

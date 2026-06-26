@@ -1,0 +1,23 @@
+# ArgoCD Application: watches manifests/c4-diagram in this infra repo and keeps
+# the cluster in sync with it. Apply this once; after that, any change Jenkins
+# pushes to that path auto-deploys.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: c4-diagram
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/AmanHogan/k3s-data-platform.git
+    targetRevision: master
+    path: manifests/c4-diagram
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: c4-diagram
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

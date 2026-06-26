@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c4-diagram
+  namespace: c4-diagram
+  labels:
+    app: c4-diagram
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: c4-diagram
+  template:
+    metadata:
+      labels:
+        app: c4-diagram
+    spec:
+      containers:
+        - name: c4-diagram
+          image: 192.168.1.245:5001/c4-diagram:1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          env:
+            # NextAuth v5 runs behind the Cloudflare Tunnel (a reverse proxy), so
+            # it must be told to trust the forwarded Host header. Without this it
+            # throws UntrustedHost / "problem with the server configuration".
+            - name: AUTH_TRUST_HOST
+              value: "true"
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: c4-diagram-secrets
+                  key: MONGODB_URI
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: c4-diagram-secrets
+                  key: AUTH_SECRET
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

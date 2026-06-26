@@ -1,0 +1,66 @@
+# Single-instance MongoDB for the c4-diagram namespace. Isolated from the
+# commitments MongoDB — separate app, separate data, separate PVC.
+#
+# Connection string for apps in the same namespace:
+#   mongodb://mongodb.c4-diagram.svc.cluster.local:27017/<dbname>
+#
+# Intentionally simple (no replica set, no auth) because it only accepts
+# connections from inside the cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb
+  namespace: c4-diagram
+  labels:
+    app: mongodb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  strategy:
+    # Recreate instead of RollingUpdate — only one pod can hold the PVC at a time
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+        - name: mongodb
+          # MongoDB 5.0+ requires a CPU with AVX support, which the HP ProDesk
+          # nodes lack. 4.4 is the last release that runs on non-AVX CPUs.
+          image: mongo:4.4
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mongodb-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  namespace: c4-diagram
+  labels:
+    app: mongodb
+spec:
+  type: ClusterIP
+  selector:
+    app: mongodb
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017
+      protocol: TCP
