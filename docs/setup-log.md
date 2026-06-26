@@ -928,6 +928,34 @@ kubectl create secret generic commitments-secrets -n commitments \
 
 ---
 
+## Phase 4b: Second app — c4-diagram (Next.js + MongoDB)
+
+Same pattern as Phase 4, second tenant: **c4-diagram** (separate repo
+`/Users/amanhogan/dev/c4-diagram`, started life as a copy of the commitments app
+scaffold, repurposed into a C4-diagramming tool). Fully isolated from commitments —
+own namespace, own MongoDB, own backups, own public hostname.
+
+- Repo pushed to `github.com/AmanHogan/c4-diagram` (had to fix a copy-paste leftover:
+  `package.json` still said `"name": "commitments"`).
+- `platform/c4-diagram-mongodb/` — same split as commitments' Mongo (`pvc.yaml` /
+  `mongodb.yaml` pinned to `mongo:4.4` / `backup-cronjob.yaml`). The live mongo pod
+  landed on **k3s-server** this time (opposite of commitments, which is on k3s-agent) —
+  backup CronJob pinned to **k3s-agent** accordingly. PV reclaim policy patched to
+  `Retain`.
+- `kubectl create namespace c4-diagram` + `c4-diagram-secrets` (`MONGODB_URI`,
+  `AUTH_SECRET`), same `AUTH_TRUST_HOST=true` NextAuth-behind-tunnel fix as commitments.
+- `argocd-apps/c4-diagram.yaml` — ArgoCD Application watching `manifests/c4-diagram`.
+  Status after first apply: Synced, but app pod sits in `ErrImagePull` until Jenkins
+  builds `192.168.1.245:5001/c4-diagram:1` for the first time (expected — no image
+  exists yet).
+- **Open / manual steps (dashboard-only, not file-based):**
+  - Jenkins: create a Pipeline job `c4-diagram` from the new GitHub repo (reuse the
+    `github-pat` credential), build once to produce the first image.
+  - Cloudflare Tunnel: add public hostname `diagram.amanhogan.com` →
+    `http://c4-diagram.c4-diagram.svc.cluster.local:3000` in the Zero Trust dashboard.
+
+---
+
 ## Phase 5: MinIO object storage (data lake)
 
 First piece of the data platform — S3-compatible object store, the foundation that Kafka,
