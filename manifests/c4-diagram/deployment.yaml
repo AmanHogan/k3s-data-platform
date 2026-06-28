@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: c4-diagram
-          image: 192.168.1.245:5001/c4-diagram:4
+          image: 192.168.1.245:5001/c4-diagram:5
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
