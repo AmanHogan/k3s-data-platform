@@ -956,6 +956,41 @@ own namespace, own MongoDB, own backups, own public hostname.
 
 ---
 
+## Phase 4c: Third app — tracker (Next.js + MongoDB, fitness/finance tracker)
+
+Same pattern again, third tenant: **tracker** (separate repo
+`/Users/amanhogan/dev/tracker`, fitness + finance tracking app, Next.js 14 +
+NextAuth v4 + Mongoose). Fully isolated — own namespace, own MongoDB, own
+backups, own public hostname.
+
+- Repo (`github.com/AmanHogan/tracker`) had no `Dockerfile`/`Jenkinsfile`/`.env.example`
+  yet — added all three, mirroring c4-diagram's Kaniko + GitOps Jenkinsfile pattern
+  (`IMAGE=tracker`, `MANIFEST=manifests/tracker/deployment.yaml`). Also added
+  `output: "standalone"` to `next.config.mjs` (required for the standalone Dockerfile).
+- Uses NextAuth **v4** (not v5 beta like the other two apps) — env vars are
+  `NEXTAUTH_SECRET` + `NEXTAUTH_URL` (set to `https://tracker.amanhogan.com`), not
+  `AUTH_SECRET`/`AUTH_TRUST_HOST`.
+- `platform/tracker-mongodb/` — same split as the other two apps (`pvc.yaml` /
+  `mongodb.yaml` pinned to `mongo:4.4` / `backup-cronjob.yaml`). Live mongo pod landed
+  on **k3s-agent** — backup CronJob pinned to **k3s-server**. PV reclaim policy patched
+  to `Retain`.
+- `kubectl create namespace tracker` + `tracker-secrets` (`MONGODB_URI`,
+  `NEXTAUTH_SECRET`).
+- Found the `manifests/tracker/`, `platform/tracker-mongodb/`, and `argocd-apps/tracker.yaml`
+  files already committed/pushed to the infra repo by a parallel session before this one
+  started (`git status` showed no diff after writing identical content) — only the
+  ArgoCD `Application` itself hadn't been applied to the cluster yet, so that's the one
+  thing this pass actually added live.
+- `argocd-apps/tracker.yaml` applied — Synced, app pod in expected `ErrImagePull` until
+  Jenkins builds `192.168.1.245:5001/tracker:1` for the first time.
+- **Open / manual steps (dashboard-only, not file-based):**
+  - Jenkins: create a Pipeline job `tracker` from `github.com/AmanHogan/tracker` (reuse
+    the `github-pat` credential), build once to produce the first image.
+  - Cloudflare Tunnel: add public hostname `tracker.amanhogan.com` →
+    `http://tracker.tracker.svc.cluster.local:3000` in the Zero Trust dashboard.
+
+---
+
 ## Phase 5: MinIO object storage (data lake)
 
 First piece of the data platform — S3-compatible object store, the foundation that Kafka,
