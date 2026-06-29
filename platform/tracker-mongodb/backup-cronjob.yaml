@@ -1,0 +1,76 @@
+# Daily MongoDB backups via `mongodump`, mirroring the commitments/c4-diagram pattern.
+#
+#  - Writes a single gzipped archive per run to a dedicated `mongodb-backups` PVC.
+#  - Keeps the most recent 7 archives, prunes older ones.
+#  - The Job pod is pinned to the k3s-server node (nodeSelector) — the live
+#    mongo pod for this app landed on k3s-agent (verified after first
+#    deploy), so the backup runs on the other node from the live data.
+#
+# Restore (manual): copy an archive out and run, e.g.:
+#   kubectl exec -it deploy/mongodb -n tracker -- sh -c \
+#     'mongorestore --gzip --archive=/path/to/archive --drop'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-backups
+  namespace: tracker
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mongodb-backup
+  namespace: tracker
+spec:
+  schedule: "0 4 * * *" # 04:00 daily — offset from commitments (03:00) and c4-diagram (03:30)
+  timeZone: "America/Chicago"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      template:
+        spec:
+          restartPolicy: OnFailure
+          nodeSelector:
+            kubernetes.io/hostname: k3s-server
+          containers:
+            - name: mongodump
+              image: mongo:4.4
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  TS=$(date +%Y%m%d-%H%M%S)
+                  echo "Starting backup tracker-${TS}..."
+                  mongodump \
+                    --host=mongodb.tracker.svc.cluster.local \
+                    --port=27017 \
+                    --gzip \
+                    --archive=/backups/tracker-${TS}.archive.gz
+                  echo "Backup written. Pruning to the latest 7..."
+                  ls -1t /backups/tracker-*.archive.gz | tail -n +8 | xargs -r rm -f
+                  echo "Current backups:"
+                  ls -lh /backups/
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: mongodb-backups
