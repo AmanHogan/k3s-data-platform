@@ -1,0 +1,72 @@
+# Reference manifest — copy into the infra repo at
+# k3s-data-platform/manifests/proxmox-visualizer/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxmox-visualizer
+  namespace: proxmox-visualizer
+  labels:
+    app: proxmox-visualizer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: proxmox-visualizer
+  template:
+    metadata:
+      labels:
+        app: proxmox-visualizer
+    spec:
+      containers:
+        - name: proxmox-visualizer
+          image: 192.168.1.245:5001/proxmox-visualizer:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          env:
+            - name: PROXMOX_NODES
+              value: "pve1:192.168.1.210,pve2:192.168.1.211,pve3:192.168.1.212"
+            - name: PROXMOX_PORT
+              value: "8006"
+            - name: PROXMOX_TOKEN_ID
+              valueFrom:
+                secretKeyRef:
+                  name: proxmox-visualizer-secrets
+                  key: PROXMOX_TOKEN_ID
+            # These 3 nodes are independent Proxmox installs, not a cluster, so each
+            # has its own token secret even though they share PROXMOX_TOKEN_ID.
+            - name: PROXMOX_TOKEN_SECRET_PVE1
+              valueFrom:
+                secretKeyRef:
+                  name: proxmox-visualizer-secrets
+                  key: PROXMOX_TOKEN_SECRET_PVE1
+            - name: PROXMOX_TOKEN_SECRET_PVE2
+              valueFrom:
+                secretKeyRef:
+                  name: proxmox-visualizer-secrets
+                  key: PROXMOX_TOKEN_SECRET_PVE2
+            - name: PROXMOX_TOKEN_SECRET_PVE3
+              valueFrom:
+                secretKeyRef:
+                  name: proxmox-visualizer-secrets
+                  key: PROXMOX_TOKEN_SECRET_PVE3
+            # Optional k3s integration — omit both if not using it.
+            - name: K3S_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: proxmox-visualizer-secrets
+                  key: K3S_API_URL
+                  optional: true
+            - name: K3S_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: proxmox-visualizer-secrets
+                  key: K3S_API_TOKEN
+                  optional: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi

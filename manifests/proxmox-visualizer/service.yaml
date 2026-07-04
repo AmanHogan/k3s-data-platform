@@ -1,0 +1,18 @@
+# Reference manifest — copy into the infra repo at
+# k3s-data-platform/manifests/proxmox-visualizer/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxmox-visualizer
+  namespace: proxmox-visualizer
+  labels:
+    app: proxmox-visualizer
+spec:
+  type: ClusterIP
+  selector:
+    app: proxmox-visualizer
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      protocol: TCP

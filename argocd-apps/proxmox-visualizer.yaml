@@ -1,0 +1,22 @@
+# Reference manifest — apply once (or copy into the infra repo at
+# k3s-data-platform/argocd-apps/proxmox-visualizer.yaml) so ArgoCD watches this path.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: proxmox-visualizer
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/AmanHogan/k3s-data-platform.git
+    targetRevision: master
+    path: manifests/proxmox-visualizer
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: proxmox-visualizer
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
