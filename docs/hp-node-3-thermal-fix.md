@@ -12,15 +12,98 @@ Root cause: refurbished 2018 machine, likely dried-out thermal paste between the
 CPU and heatsink and/or a seized/dusty fan. Common on machines that sat in a
 warehouse before being resold.
 
-## Symptoms
+## What the logs showed
 
-- 4 red + 2 white LED blink code on power-on
-- Machine shuts down at idle (not under load) — indicates the thermal issue is
-  severe, not marginal
-- `pve3` and `k3s-agent-2` both show offline in `tailscale status`
-- `kubectl get nodes` shows `k3s-agent-2` as `NotReady`
+`journalctl --list-boots` revealed 6 crashes in ~15 minutes during setup on
+2026-07-03, each boot lasting shorter than the last (classic thermal runaway —
+never cooled between reboots). After 19 hours powered off it booted fine at 36°C
+— confirming thermal, not hardware failure.
 
-## Materials needed
+```
+-8  05:31 → 07:17  (normal, ~2hrs)
+-7  08:13 → 08:17  (4 min then crash)
+-6  08:22 → 08:23  (1 min then crash)
+-5  08:29 → 08:33  (4 min then crash)
+-4  08:35 → 08:37  (2 min then crash)
+-3  08:44 → 08:45  (1 min then crash)
+-2  08:47 → 08:47  (instant crash)
+--- 19 hour gap (cooling) ---
+-1  Sat 04:31  (booted fine at 36°C)
+```
+
+## Check temperature anytime (from Mac)
+
+```bash
+ssh root@100.85.197.56 "sensors | grep 'Package id 0'"
+```
+
+## Thermal watchdog service (auto-shutdown at 85°C)
+
+Set up on pve3 so it shuts down cleanly instead of hard-crashing when temps spike.
+Run these commands on pve3 via SSH:
+
+**Step 1 — create the watchdog script:**
+```bash
+cat << 'EOF' > /usr/local/bin/thermal-watchdog.sh
+#!/bin/bash
+LIMIT=85
+while true; do
+  TEMP=$(sensors | grep 'Package id 0' | awk '{print $4}' | tr -d '+°C')
+  if (( $(echo "$TEMP > $LIMIT" | bc -l) )); then
+    echo "CRITICAL: CPU temp ${TEMP}°C exceeded ${LIMIT}°C — shutting down" | systemd-cat -t thermal-watchdog -p crit
+    shutdown -h now
+  fi
+  sleep 30
+done
+EOF
+
+chmod +x /usr/local/bin/thermal-watchdog.sh
+```
+
+**Step 2 — create the systemd service:**
+```bash
+cat << 'EOF' > /etc/systemd/system/thermal-watchdog.service
+[Unit]
+Description=Thermal watchdog — shutdown if CPU exceeds limit
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/thermal-watchdog.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl enable --now thermal-watchdog
+```
+
+**Verify it's running:**
+```bash
+systemctl status thermal-watchdog
+```
+
+**Check the watchdog logs:**
+```bash
+journalctl -t thermal-watchdog -f
+```
+
+## BIOS setting — auto power-on after shutdown
+
+So the machine restarts itself after a clean thermal shutdown:
+
+1. Reboot pve3, press **F10** at the HP logo to enter BIOS
+2. Go to **Advanced → Power Management → After Power Loss**
+3. Set to **Power On**
+4. Save and exit
+
+This means if the watchdog shuts it down cleanly, it'll come back on its own
+once it cools — without needing physical intervention.
+
+## Physical fix (do when home)
+
+### Materials needed
 
 | Item | Purpose | ~Cost |
 |---|---|---|
@@ -30,65 +113,21 @@ warehouse before being resold.
 | Coffee filter or lint-free cloth | Wipe surface clean without leaving lint | ~$0 (household) |
 | Small Phillips head screwdriver | Open case, remove heatsink screws | ~$0 (household) |
 
-Total: ~$25-30 if starting from nothing.
-
-## Fix procedure (when home)
+### Steps
 
 1. **Power off completely** — hold power button, unplug the power cable.
-
-2. **Open the case** — EliteDesk 800 G4 has a slide-off top panel, no tools
-   needed for the outer case. Heatsink screws need the Phillips head.
-
-3. **Check the fan first** — spin it by hand. If it doesn't spin freely or feels
-   gritty, the fan may need replacing in addition to the paste (~$10-15 on Amazon
-   for the G4-compatible fan).
-
-4. **Blow out dust** — compressed air through the fan, heatsink fins, and all
-   vents. Do this outside or in a well-ventilated area.
-
-5. **Remove the heatsink** — unscrew the 4 screws around the CPU heatsink in a
-   cross pattern (loosen each a little at a time, don't fully remove one before
-   starting the others — prevents warping).
-
-6. **Clean off old paste** — use isopropyl alcohol + lint-free cloth/coffee
-   filter on both the CPU surface and the heatsink contact plate. Wipe until
-   there's no grey residue left. Let dry completely (30 seconds).
-
-7. **Apply new paste** — a pea-sized dot in the center of the CPU die. Don't
-   spread it — the heatsink pressure spreads it when you tighten it down.
-
+2. **Open the case** — EliteDesk 800 G4 has a slide-off top panel, no tools needed for the outer case.
+3. **Check the fan first** — spin it by hand. If it doesn't spin freely, the fan may need replacing (~$10-15).
+4. **Blow out dust** — compressed air through the fan, heatsink fins, and all vents.
+5. **Remove the heatsink** — unscrew the 4 screws in a cross pattern (loosen each a little at a time).
+6. **Clean off old paste** — isopropyl alcohol + lint-free cloth on both the CPU surface and heatsink contact plate. Let dry completely.
+7. **Apply new paste** — a pea-sized dot in the center of the CPU die. Don't spread it.
 8. **Reinstall heatsink** — same cross pattern, tighten evenly.
+9. **Power on and watch the fan** — should spin within seconds of boot.
+10. **Monitor temps** — `sensors` should show idle CPU under 50°C.
 
-9. **Power on and watch the fan** — it should spin up within seconds of boot.
-   If it doesn't, the fan is the problem not the paste.
+### Prevention
 
-10. **Monitor temps** — from the pve3 shell:
-    ```bash
-    apt install -y lm-sensors
-    sensors
-    ```
-    Idle CPU temp should be under 50°C. If it's still spiking above 80°C at
-    idle after the paste replacement, the fan needs replacing.
-
-## After the fix
-
-Once pve3 is stable, SSH in and start k3s-agent-2's VM:
-
-```bash
-ssh root@100.85.197.56   # pve3 Tailscale IP
-qm list                   # find k3s-agent-2's VM ID
-qm start <vmid>
-```
-
-Then verify from the Mac:
-```bash
-kubectl get nodes          # k3s-agent-2 should return to Ready
-tailscale status           # pve3 and k3s-agent-2 both online
-```
-
-## Prevention
-
-- Keep hp-node-3 in open air with at least a few inches of clearance on all sides
-  (mini PCs have tight airflow tolerance)
-- Avoid stacking anything on top of it
+- Keep hp-node-3 in open air with a few inches of clearance on all sides
+- Don't stack anything on top of it
 - Re-clean every 6-12 months if the environment is dusty
