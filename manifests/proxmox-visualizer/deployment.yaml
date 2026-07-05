@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: proxmox-visualizer
-          image: 192.168.1.245:5001/proxmox-visualizer:latest
+          image: 192.168.1.245:5001/proxmox-visualizer:1
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
