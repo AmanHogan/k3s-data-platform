@@ -63,6 +63,22 @@ spec:
                   name: proxmox-visualizer-secrets
                   key: K3S_API_TOKEN
                   optional: true
+            # Optional MinIO bucket stats — omit all three if not using it.
+            # In-cluster, MinIO is reachable via its LAN NodePort.
+            - name: MINIO_ENDPOINT
+              value: "http://192.168.1.200:32000"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: proxmox-visualizer-secrets
+                  key: MINIO_ACCESS_KEY
+                  optional: true
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: proxmox-visualizer-secrets
+                  key: MINIO_SECRET_KEY
+                  optional: true
           resources:
             requests:
               cpu: 25m
