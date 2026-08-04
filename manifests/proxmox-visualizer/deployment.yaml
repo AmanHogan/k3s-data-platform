@@ -19,13 +19,13 @@ spec:
     spec:
       containers:
         - name: proxmox-visualizer
-          image: 192.168.1.245:5001/proxmox-visualizer:1
+          image: 192.168.4.245:5001/proxmox-visualizer:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
           env:
             - name: PROXMOX_NODES
-              value: "pve1:192.168.1.210,pve2:192.168.1.211,pve3:192.168.1.212"
+              value: "pve1:192.168.4.210,pve2:192.168.4.211,pve3:192.168.4.212"
             - name: PROXMOX_PORT
               value: "8006"
             - name: PROXMOX_TOKEN_ID
@@ -66,7 +66,7 @@ spec:
             # Optional MinIO bucket stats — omit all three if not using it.
             # In-cluster, MinIO is reachable via its LAN NodePort.
             - name: MINIO_ENDPOINT
-              value: "http://192.168.1.200:32000"
+              value: "http://192.168.4.200:32000"
             - name: MINIO_ACCESS_KEY
               valueFrom:
                 secretKeyRef:

@@ -131,3 +131,74 @@ once it cools — without needing physical intervention.
 - Keep hp-node-3 in open air with a few inches of clearance on all sides
 - Don't stack anything on top of it
 - Re-clean every 6-12 months if the environment is dusty
+
+---
+
+## Follow-up investigation (2026-07-05)
+
+The stacking turned out to be a major factor: the two HP nodes were stacked on
+top of each other, so pve3 was inhaling pve1/pve2's hot exhaust. After
+unstacking, idle temps settled at 36-41°C and stayed there. The machine was
+still hot to the touch 15 hours after shutdown purely from the node below it.
+
+But pve3 kept becoming **unreachable** during the day even at healthy temps.
+Findings from physical-console diagnosis:
+
+- **Not thermal**: survived `stress-ng --cpu 6 --timeout 300s` at max 70°C
+  (throttle point is 94°C, crit 100°C).
+- **Not RAM (probably)**: survived `stress-ng --vm 4 --vm-bytes 75% --timeout 300s`.
+- **Not power**: fans/lights stayed on during "outages" — machine was never off.
+- **Not the thermal watchdog script**: journalctl showed it never fired.
+- Several "crash" boot entries were actually **manual reboots** done because the
+  machine was unreachable — the machine may never have crashed on its own that day.
+- Separate issue found & fixed: `/etc/resolv.conf` had no nameservers
+  (DNS dead → apt broken, everything slow). Fixed with router + 8.8.8.8.
+  Should also be set permanently in Proxmox UI → pve3 → System → DNS.
+
+### Current suspects for the network hangs (unresolved)
+
+1. **e1000e NIC hardware unit hang** — known Linux bug on Intel NICs in these
+   HP boxes. Machine runs fine but drops off the network until reboot.
+   Look for `Detected Hardware Unit Hang` in `journalctl -k`.
+   Mitigation: `ethtool -K eno1 tso off gso off` (non-persistent).
+2. **Headless deep C-state freeze** — Intel boxes running without a monitor can
+   freeze in deep power-saving states. Symptom pattern matched: with a monitor
+   plugged in, everything worked flawlessly. Fix if confirmed: add
+   `intel_idle.max_cstate=1` to kernel cmdline or disable deep C-states in BIOS.
+
+### The trap (next steps)
+
+1. Leave monitor attached, run normally. If stable for days → unplug monitor.
+2. If hangs return headless → C-state bug; apply `intel_idle.max_cstate=1`.
+3. If it hangs with monitor attached → do NOT reboot; at the console run:
+   `journalctl -k | grep -iE "hang|e1000e|eno1"` and `ping 192.168.1.254`.
+4. `qm set 100 --onboot 1` was needed — VM did not auto-start after host boot.
+
+### CONFIRMED (2026-07-05, later): headless deep C-state freeze
+
+Controlled experiment: pve3 ran flawlessly all day with a monitor attached
+(survived CPU + RAM stress tests at healthy temps). The moment the display was
+unplugged, the host went down and k3s-agent-2 restarted. Suspect #2 confirmed.
+
+**Fix applied** (kernel side): cap C-states via GRUB —
+
+```bash
+sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="quiet intel_idle.max_cstate=1"/' /etc/default/grub
+update-grub
+reboot
+```
+
+**Hardware alternative**: HDMI dummy plug (~$7) — fakes an attached display so
+the iGPU never lets the system enter the buggy deep-idle state.
+
+Verification: run headless for 24h after the fix. If stable, consider adding the
+same GRUB line to pve1/pve2 preemptively (same model family).
+
+### RESOLVED (2026-07-05): hot-unplug only, headless boot is fine
+
+Verified: pve3 boots and runs normally with no monitor attached. The crashes
+were triggered specifically by **unplugging the display while running** (i915
+hot-unplug event). BIOS is Q21 02.33.00 (newer than HP's last published 02.31).
+
+**Operating rule for pve3: shut down before connecting/disconnecting a monitor.
+Never hot-unplug the display.** No dummy plug needed unless this recurs.

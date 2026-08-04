@@ -15,7 +15,7 @@ controller:
     - credentials-binding      # bind GitHub/registry creds in pipelines
 
   serviceType: LoadBalancer
-  loadBalancerIP: 192.168.1.246
+  loadBalancerIP: 192.168.4.246
   servicePort: 8080
   jenkinsUrlProtocol: http
 

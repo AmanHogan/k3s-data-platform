@@ -1033,22 +1033,145 @@ helm install minio minio/minio --version 5.4.0 -n data-platform -f platform/mini
 
 ---
 
+## Phase: Network Migration (apartment move, 2026-08-03)
+
+Moved from AT&T (192.168.1.0/24, gateway .254) to Frontier + eero (192.168.4.0/24,
+gateway .1). Tailscale and Cloudflare Tunnel survived unchanged (outbound-only).
+Everything hardcoded to the old subnet had to be updated.
+
+### What changed
+
+**ISP / router:** AT&T router (192.168.1.254) → Frontier ONT + eero (192.168.4.1)
+**Physical:** Nodes on metal mesh folder holders (not stacked — learned from pve3
+thermal incident). Connected via 50ft Cat6 cable: eero → cable → unmanaged switch → 3 nodes.
+**Wall ethernet ports:** Apartment wall ports are unpatched / not connected to the eero.
+Cannot use them — all nodes go through the switch directly off the eero.
+
+### IP changes
+
+| Resource | Old IP | New IP |
+|---|---|---|
+| pve1 (Proxmox host) | 192.168.1.210 | 192.168.4.210 |
+| pve2 (Proxmox host) | 192.168.1.211 | 192.168.4.211 |
+| pve3 (Proxmox host) | 192.168.1.212 | 192.168.4.212 |
+| k3s-server (VM on pve1) | 192.168.1.200 | 192.168.4.200 |
+| k3s-agent (VM on pve2) | 192.168.1.201 | 192.168.4.201 |
+| k3s-agent-2 (VM on pve3) | 192.168.1.202 | 192.168.4.202 |
+| Gateway | 192.168.1.254 | 192.168.4.1 |
+| MetalLB pool | 192.168.1.240–250 | 192.168.4.240–250 |
+| Traefik (MetalLB) | 192.168.1.240 | 192.168.4.240 |
+| Docker Registry (MetalLB) | 192.168.1.245 | 192.168.4.245 |
+| Jenkins (MetalLB) | 192.168.1.246 | 192.168.4.246 |
+| DNS servers | 192.168.1.254 | 192.168.4.1, 8.8.8.8 |
+
+**Unchanged:** Tailscale IPs (100.x.x.x), Cloudflare tunnel (outbound-only, token-based),
+Mac kubeconfig (uses Tailscale IP 100.112.249.53), all k8s cluster-internal DNS
+(*.svc.cluster.local).
+
+### Files updated on nodes (manual, via SSH / qm guest exec)
+
+| Node | File | Change |
+|---|---|---|
+| pve1, pve2, pve3 | `/etc/network/interfaces` (vmbr0 block) | address + gateway to 192.168.4.x |
+| pve1, pve2, pve3 | `/etc/resolv.conf` | nameservers → 192.168.4.1, 8.8.8.8 |
+| k3s-server VM | `/etc/netplan/50-cloud-init.yaml` | address, gateway, nameservers |
+| k3s-server VM | `/etc/systemd/system/k3s.service` | `--node-ip` and `--tls-san` |
+| k3s-server VM | `/etc/rancher/k3s/config.yaml` | added `192.168.4.200` to tls-san list |
+| k3s-server VM | `/etc/rancher/k3s/registries.yaml` | mirror/config IP |
+| k3s-agent VM | `/etc/netplan/50-cloud-init.yaml` | address, gateway, nameservers |
+| k3s-agent VM | `/etc/systemd/system/k3s-agent.service` | `--node-ip` |
+| k3s-agent VM | `/etc/systemd/system/k3s-agent.service.env` | `K3S_URL` |
+| k3s-agent VM | `/etc/rancher/k3s/registries.yaml` | mirror/config IP |
+| k3s-agent-2 VM | `/etc/netplan/50-cloud-init.yaml` | address, gateway, nameservers |
+| k3s-agent-2 VM | `/etc/systemd/system/k3s-agent.service` | `--node-ip` |
+| k3s-agent-2 VM | `/etc/systemd/system/k3s-agent.service.env` | `K3S_URL` |
+| k3s-agent-2 VM | `/etc/rancher/k3s/registries.yaml` | mirror/config IP |
+
+### Files updated in repos (committed)
+
+| Repo | File | Change |
+|---|---|---|
+| k3s-data-platform | `platform/registry/registry.yaml` | loadBalancerIP |
+| k3s-data-platform | `platform/jenkins/values.yaml` | loadBalancerIP |
+| k3s-data-platform | `platform/metallb/metallb-config.yaml` | IP pool range |
+| k3s-data-platform | `manifests/commitments/deployment.yaml` | image registry IP |
+| k3s-data-platform | `manifests/c4-diagram/deployment.yaml` | image registry IP |
+| k3s-data-platform | `manifests/tracker/deployment.yaml` | image registry IP |
+| k3s-data-platform | `manifests/proxmox-visualizer/deployment.yaml` | registry IP, Proxmox host IPs, MinIO endpoint |
+| tracker | `Jenkinsfile` | REGISTRY variable |
+| c4-diagram | `Jenkinsfile` | REGISTRY variable |
+| commitments | `Jenkinsfile` | REGISTRY variable |
+
+### Cluster commands run
+
+```bash
+# MetalLB pool update (live)
+kubectl patch ipaddresspool local-pool -n metallb-system --type=json \
+  -p '[{"op":"replace","path":"/spec/addresses/0","value":"192.168.4.240-192.168.4.250"}]'
+
+# Registry service re-created from manifest (old svc deleted, new applied)
+kubectl apply -f platform/registry/registry.yaml
+
+# Jenkins service re-created via Helm upgrade
+helm upgrade jenkins jenkins/jenkins -n cicd -f platform/jenkins/values.yaml
+
+# Portfolio MongoDB pinned to 4.4 (was mongo:7, crashed on AVX-less CPUs)
+kubectl set image deployment/mongodb mongodb=mongo:4.4 -n portfolio
+
+# k3s / k3s-agent restarted on all 3 nodes after registries.yaml update
+```
+
+### Gotchas encountered
+
+1. **Wall ethernet ports are dead** — apartment wall jacks are not patched to the eero.
+   Nodes must connect via the switch directly off the eero LAN port.
+2. **Proxmox hosts had static IPs from old subnet** — would not get DHCP from eero.
+   Had to plug in monitor+keyboard and edit `/etc/network/interfaces` manually on each.
+3. **VM console via `qm terminal` failed** — VMs don't have serial interfaces configured.
+   Used `qm guest exec` (requires qemu-guest-agent running) to run commands inside VMs
+   from the Proxmox host, or Proxmox web UI noVNC console.
+4. **noVNC console has no clipboard paste** — had to type commands manually or use
+   `qm guest exec` from the host SSH session.
+5. **Stray `≈` character in config.yaml** — nano on noVNC inserted a non-ASCII character,
+   broke YAML parsing, caused k3s to fail to start. Fixed by rewriting the file via
+   `bash -c 'cat > ...'`.
+6. **Jenkins + Registry services stuck in `<pending>`** — after MetalLB pool update, the
+   old services still referenced the 192.168.1.x pool. Had to delete and recreate them
+   (registry from manifest, Jenkins via `helm upgrade`).
+7. **Portfolio MongoDB CrashLoopBackOff** — running `mongo:7` which requires AVX. HP CPUs
+   lack AVX. Pinned to `mongo:4.4` like all other MongoDB instances.
+8. **Tailscale DNS override** — `/etc/resolv.conf` on Proxmox hosts showed a Tailscale
+   warning about not editing by hand. Edited anyway; works fine, Tailscale reconnected.
+9. **pve3 password confusion** — Proxmox host root password vs VM user password are
+   different. SSH to `192.168.4.202` reaches the VM (needs VM credentials), SSH to
+   `192.168.4.212` reaches the Proxmox host (needs root password).
+
+### Verification
+
+- All 3 k3s nodes: `Ready`
+- All pods running (except portfolio mongodb which was fixed)
+- Cloudflare tunnel: Healthy, `proxmox.amanhogan.com` returns 302 (Access email gate)
+- LoadBalancer services: Traefik `.240`, Registry `.245`, Jenkins `.246`
+- `commitments.amanhogan.com` DNS removed intentionally (app deleted from Cloudflare)
+
+---
+
 ## Status / Next Up
 
-**Phases 0–5 complete. Core platform + CI/CD + public access are proven end-to-end; the first real app (commitments) is deployed via GitOps; MinIO is the first data-platform brick.**
+**Phases 0–5 complete + network migration done. Core platform + CI/CD + public access proven end-to-end. Now on Frontier/eero (192.168.4.0/24).**
 
-- **Phase 0 (Proxmox):** pve1 + pve2 installed, repos fixed (incl. ceph.list), Tailscale.
-- **Phase 1 (k3s + cluster):** k3s-server (`192.168.1.200` / Tailscale `100.112.249.53`) + k3s-agent (`192.168.1.201`), Ubuntu 22.04, swap off, qemu-guest-agent; Mac kubectl via Tailscale IP; MetalLB pool `.240-.250` (Traefik on `.240`); namespaces `data-platform`/`cicd`/`monitoring` (+ `commitments`, `cloudflare` added later).
-- **Phase 2 (CI/CD):** in-cluster registry (`192.168.1.245:5001`, trusted on both nodes); Jenkins (Kaniko builds); ArgoCD (GitOps deploy); Headlamp dashboard. **Full automatic loop** proven: push code → build → registry → manifest bump → ArgoCD deploy.
-- **Phase 3 (Public access):** domain `amanhogan.com` registered via Cloudflare; `cloudflared` tunnel (`platform/cloudflare/cloudflared.yaml`, namespace `cloudflare`). Verified live with valid HTTPS from outside the home network. Account hardening done (2FA, Always Use HTTPS, Full(strict) TLS, Bot Fight Mode).
-- **Phase 4 (First real app):** **commitments** (Next.js + MongoDB 4.4 + daily off-node backups) deployed via the pipeline + ArgoCD (`Synced/Healthy`); `hello-world` scaffold removed. Public hostname `commitments.amanhogan.com` available via the tunnel.
+- **Phase 0 (Proxmox):** pve1 (`192.168.4.210`) + pve2 (`192.168.4.211`) + pve3 (`192.168.4.212`) installed, repos fixed (incl. ceph.list), Tailscale. pve3 kernel params: `intel_idle.max_cstate=1 nomodeset` (headless stability).
+- **Phase 1 (k3s + cluster):** k3s-server (`192.168.4.200` / Tailscale `100.112.249.53`) + k3s-agent (`192.168.4.201`) + k3s-agent-2 (`192.168.4.202`), Ubuntu 22.04, swap off, qemu-guest-agent; Mac kubectl via Tailscale IP; MetalLB pool `.240-.250` (Traefik on `.240`); namespaces `data-platform`/`cicd`/`monitoring`/`cloudflare`/`c4-diagram`/`tracker`/`portfolio`/`proxmox-visualizer`.
+- **Phase 2 (CI/CD):** in-cluster registry (`192.168.4.245:5001`, trusted on all 3 nodes); Jenkins (`192.168.4.246`, Kaniko builds); ArgoCD (GitOps deploy); Headlamp dashboard. **Full automatic loop** proven: push code → build → registry → manifest bump → ArgoCD deploy.
+- **Phase 3 (Public access):** domain `amanhogan.com` registered via Cloudflare; `cloudflared` tunnel (namespace `cloudflare`). Public hostnames: `proxmox.amanhogan.com`, `tracker.amanhogan.com`, `diagram.amanhogan.com`. Account hardening done (2FA, Always Use HTTPS, Full(strict) TLS, Bot Fight Mode). Cloudflare Access email gate on proxmox visualizer.
+- **Phase 4 (Apps):** tracker, c4-diagram, proxmox-visualizer deployed via GitOps. commitments removed from Cloudflare. Portfolio MongoDB pinned to 4.4 (AVX).
 - **Phase 5 (MinIO):** S3 object store in `data-platform` (Helm chart `minio/minio` 5.4.0, pinned), 20Gi local-path PVC on k3s-agent, 4 buckets, NodePort (API `:32000`, Console `:32001`), Tailscale-only. `mc` copy/read test passed.
 
 **Open items / housekeeping:**
 
-- Shrink router DHCP range to end at `.239` (currently overlaps the MetalLB pool `.240-.250`).
-- MinIO data is a single local-path copy on k3s-agent (no backups yet) — fine for reproducible `raw-data`, but add a backup story before anything irreplaceable lands there.
-- If/when moving locations: Tailscale (`100.x.x.x`) and the Cloudflare Tunnel both survive unchanged (outbound-only / coordination-based). The thing to watch is the LAN subnet (`192.168.1.x`) — configure the new router to keep the same `192.168.1.0/24` range to avoid reconfiguring Proxmox/k3s/MetalLB static IPs.
+- Check eero DHCP range doesn't overlap MetalLB pool `.240-.250`.
+- MinIO data is a single local-path copy on k3s-agent (no backups yet).
+- pve3 headless stability: `intel_idle.max_cstate=1` + `nomodeset` applied. HDMI dummy plug ($7) is the definitive fix if still unstable. Never hot-unplug the monitor while running.
 
 **Next (data platform — being built self-guided; see `docs/learning-path.md`):**
 
