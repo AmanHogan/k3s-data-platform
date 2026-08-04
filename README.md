@@ -215,5 +215,124 @@ k3s-data-platform/
 └── argocd-apps/               # ArgoCD Application CRs
 ```
 
+## Cloud Equivalent — "What This Would Look Like in Production"
+
+This homelab maps directly to a production AWS architecture. The diagram below shows how each homelab component translates to its cloud-native equivalent, with the security and networking layers you'd add in a real enterprise deployment.
+
+### Homelab → AWS Mapping
+
+| Homelab Component | AWS Equivalent | Why |
+|---|---|---|
+| Proxmox VE (hypervisor) | EC2 / EKS managed nodes | AWS manages the hypervisor layer |
+| k3s cluster | **EKS** (Elastic Kubernetes Service) | Managed control plane, no etcd to maintain |
+| MetalLB | **AWS Load Balancer Controller** + ALB/NLB | Cloud-native L4/L7 load balancing |
+| Traefik ingress | **ALB Ingress Controller** or **NGINX Ingress** | ALB handles TLS termination, path routing |
+| Cloudflare Tunnel | **CloudFront** (CDN) + **WAF** | Edge caching + DDoS/bot protection |
+| Cloudflare Access (email gate) | **Cognito** or **ALB + OIDC** | Identity-aware access control |
+| Tailscale (admin access) | **Systems Manager Session Manager** or VPN | No inbound ports needed for admin |
+| Docker Registry (in-cluster) | **ECR** (Elastic Container Registry) | Managed, no storage to maintain |
+| Jenkins + Kaniko | **CodePipeline + CodeBuild** (or keep Jenkins on EKS) | Managed CI/CD, pay-per-build |
+| ArgoCD | **ArgoCD on EKS** or **Flux** | GitOps works the same in cloud |
+| MinIO | **S3** | MinIO is literally an S3-compatible API |
+| MongoDB (local) | **DocumentDB** or **MongoDB Atlas** | Managed backups, replicas, patching |
+| Longhorn (storage) | **EBS** (block) / **EFS** (shared) | CSI drivers, no local-path provisioner |
+| local-path-provisioner | **EBS CSI Driver** | Dynamic PV provisioning |
+
+### AWS Production Architecture
+
+```mermaid
+graph TD
+    subgraph Internet
+        USER[Users]
+    end
+
+    subgraph Edge[AWS Edge / Global]
+        R53[Route 53<br/>DNS]
+        CF[CloudFront<br/>CDN + Cache]
+        WAF[AWS WAF<br/>Rate limiting · Bot protection<br/>SQL injection · XSS filtering]
+    end
+
+    subgraph VPC["VPC · 10.0.0.0/16"]
+
+        subgraph Public["Public Subnets · 10.0.1.0/24, 10.0.2.0/24"]
+            ALB[Application Load Balancer<br/>TLS termination · Path routing]
+            NAT[NAT Gateway<br/>Outbound for private subnets]
+            BASTION[Bastion / SSM<br/>Admin access]
+        end
+
+        subgraph Private["Private Subnets · 10.0.10.0/24, 10.0.11.0/24"]
+            subgraph EKS[EKS Cluster]
+                ING[NGINX Ingress Controller<br/>or ALB Ingress Controller]
+                APP1[proxmox-visualizer<br/>Pod]
+                APP2[c4-diagram<br/>Pod]
+                ARGO[ArgoCD<br/>Pod]
+                JENKINS[Jenkins<br/>Pod]
+            end
+        end
+
+        subgraph Data["Data Subnets · 10.0.20.0/24, 10.0.21.0/24"]
+            RDS[(DocumentDB / RDS<br/>Multi-AZ)]
+            REDIS[(ElastiCache Redis<br/>Session + Query cache)]
+        end
+
+        NACL_PUB[NACL: Allow 80,443 in<br/>Deny known bad CIDRs]
+        NACL_PRIV[NACL: Allow from public<br/>subnets only]
+        NACL_DATA[NACL: Allow from private<br/>subnets only on DB ports]
+
+        SG_ALB[SG: 80,443 from 0.0.0.0/0]
+        SG_EKS[SG: traffic from ALB SG only]
+        SG_DB[SG: 27017,6379 from EKS SG only]
+    end
+
+    subgraph AWSServices[AWS Managed Services]
+        ECR[ECR<br/>Container Registry]
+        S3[S3<br/>Object Storage]
+        CW[CloudWatch<br/>Logs + Metrics]
+        CODEP[CodePipeline<br/>CI/CD]
+        COG[Cognito<br/>Auth / OIDC]
+    end
+
+    USER --> R53
+    R53 --> CF
+    CF --> WAF
+    WAF --> ALB
+    ALB --> ING
+    ING --> APP1
+    ING --> APP2
+    BASTION -.->|SSM / kubectl| EKS
+    EKS --> RDS
+    EKS --> REDIS
+    CODEP --> ECR
+    ECR --> EKS
+    ARGO -.->|GitOps sync| EKS
+    EKS --> S3
+    EKS --> CW
+    NAT -->|Outbound| Internet
+```
+
+### Security Layers (Interview Talking Points)
+
+```
+Request flow and where each security layer applies:
+
+User → Route 53 (DNS)
+  → CloudFront (CDN, edge caching, geographic restrictions)
+    → WAF (rate limiting, bot detection, OWASP rules, IP allowlists)
+      → ALB (TLS termination, OIDC/Cognito auth)
+        → Security Group (allow only ALB → EKS node ports)
+          → NACL (stateless subnet-level firewall, deny known bad CIDRs)
+            → NGINX Ingress (path routing, rate limiting, request validation)
+              → Pod (Network Policy: namespace isolation, deny-all default)
+                → Database (Security Group: only EKS SG on port 27017)
+```
+
+**Key concepts to mention in interviews:**
+- **Defense in depth** — every layer adds a check, no single point of failure
+- **Least privilege** — security groups reference other SGs, not CIDRs; pods can't talk cross-namespace by default
+- **Public vs private subnets** — only ALB and NAT Gateway have public IPs; EKS nodes and databases are never internet-facing
+- **NACLs vs Security Groups** — NACLs are stateless (need explicit allow for return traffic), SGs are stateful (return traffic auto-allowed). NACLs are the subnet-level coarse filter, SGs are the instance-level fine filter
+- **NAT Gateway** — pods can pull images and call AWS APIs outbound, but nothing inbound reaches them except through the ALB
+- **Zero-trust admin access** — no SSH. Use SSM Session Manager or `kubectl` via IAM auth, all actions logged to CloudTrail
+
 For the full build plan and phase details, see [PLAN.md](PLAN.md).
 For the step-by-step setup log, see [docs/setup-log.md](docs/setup-log.md).
