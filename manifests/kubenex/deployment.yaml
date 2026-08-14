@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubenex
+  namespace: kubenex
+  labels:
+    app: kubenex
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubenex
+  template:
+    metadata:
+      labels:
+        app: kubenex
+    spec:
+      containers:
+        - name: kubenex
+          image: 192.168.4.245:5001/kubenex:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          env:
+            - name: THRIFT_HOST
+              value: "spark-thrift.data-platform.svc.cluster.local"
+            - name: THRIFT_PORT
+              value: "10000"
+            - name: NEXT_PUBLIC_JUPYTER_URL
+              value: "http://100.112.249.53:30888"
+            - name: NEXT_PUBLIC_SPARK_UI_URL
+              value: "http://100.112.249.53:30808"
+            - name: NEXT_PUBLIC_AIRFLOW_URL
+              value: "http://100.112.249.53:30880"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            periodSeconds: 30
