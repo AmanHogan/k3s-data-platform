@@ -56,6 +56,10 @@ spec:
               export PATH=$HOME/.local/bin:$PATH
               export SPARK_HOME=/opt/spark
               export PYTHONPATH=$SPARK_HOME/python:$SPARK_HOME/python/lib/py4j-0.10.9.7-src.zip:$PYTHONPATH
+              export SPARK_CONF_DIR=/tmp/spark-conf
+              mkdir -p $HOME/.ivy2 /tmp/spark-conf /tmp/spark-local
+              echo "spark.jars.ivy $HOME/.ivy2" > /tmp/spark-conf/spark-defaults.conf
+              echo "spark.local.dir /tmp/spark-local" >> /tmp/spark-conf/spark-defaults.conf
               mkdir -p $HOME /tmp/jupyter-work
               pip install --quiet --user jupyter notebook pandas numpy matplotlib boto3 && \
               cd /tmp/jupyter-work && \
@@ -69,7 +73,7 @@ spec:
                 --NotebookApp.allow_origin='*' \
                 --notebook-dir=/tmp/jupyter-work
           env:
-            # Connect to the Spark standalone master
+            # Connect to the Spark standalone cluster
             - name: SPARK_MASTER
               value: spark://spark-master.data-platform.svc.cluster.local:7077
             # Pod IP so Spark executors can call back to the driver
@@ -106,11 +110,11 @@ spec:
               mountPath: /tmp/jupyter-work
           resources:
             requests:
-              cpu: 250m
-              memory: 512Mi
+              cpu: 500m
+              memory: 2Gi
             limits:
               cpu: "2"
-              memory: 2Gi
+              memory: 4Gi
           # Jupyter can take a moment to start
           readinessProbe:
             httpGet:

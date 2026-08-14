@@ -1,7 +1,7 @@
 # k3s Data Platform
 
 Bare-metal homelab running a 3-node k3s Kubernetes cluster on Proxmox VE, with a full CI/CD pipeline, public access via Cloudflare, and a growing Databricks-style data platform. Built as a learning project — every piece deployed from scratch, not managed services.
-**Last updated:** 2026-08-03
+**Last updated:** 2026-08-14
 
 ## Screenshots
 
@@ -65,7 +65,18 @@ graph LR
 
     subgraph data[Data Platform · data-platform]
         MINIO[MinIO<br/>S3 Object Store<br/>4 buckets · 20Gi]
+        SPARK[Spark 3.5 Cluster<br/>master + worker]
+        THRIFT[Spark Thrift Server<br/>SQL endpoint :30100]
+        JUPYTER[JupyterHub<br/>PySpark notebooks]
+        PG[PostgreSQL 16<br/>metastore + airflow + mlflow]
+        AIRFLOW[Airflow 2.10<br/>orchestration]
     end
+
+    THRIFT --> SPARK
+    JUPYTER --> SPARK
+    THRIFT --> PG
+    AIRFLOW --> PG
+    SPARK --> MINIO
 
     subgraph infra[Infrastructure · kube-system + metallb]
         METALLB[MetalLB<br/>192.168.4.240–250]
@@ -151,11 +162,13 @@ gantt
     MinIO object store             :done, p5, 2026-07-06, 2d
     Network migration (apartment)  :done, nm, 2026-08-03, 1d
 
-    section Data Platform (planned)
-    Kafka (KRaft, 1 broker)        :p6, 2026-08-10, 7d
-    PySpark + Delta Lake           :p7, after p6, 14d
-    JupyterHub                     :p8, after p7, 7d
-    MLflow + Postgres              :p9, after p8, 7d
+    section Data Platform
+    Spark cluster + JupyterHub     :done, p6, 2026-08-10, 3d
+    Postgres + Thrift SQL endpoint :done, p7, 2026-08-13, 2d
+    Airflow orchestration          :done, p8, 2026-08-13, 2d
+    Databricks-style UI (Next.js)  :active, p9, 2026-08-15, 14d
+    MLflow model registry          :p10, after p9, 7d
+    Kafka (KRaft, 1 broker)        :p11, after p10, 7d
 
     section AI / Learning (MacBook local)
     PySpark basics                 :active, a1, 2026-07-11, 14d
@@ -188,6 +201,10 @@ gantt
 | ArgoCD         | `https://100.112.249.53:30789` |
 | Headlamp       | `http://100.112.249.53:32526`  |
 | MinIO Console  | `http://100.112.249.53:32001`  |
+| JupyterHub     | `http://100.112.249.53:30888`  |
+| Spark UI       | `http://100.112.249.53:30808`  |
+| Spark SQL JDBC | `jdbc:hive2://100.112.249.53:30100` |
+| Airflow        | `http://100.112.249.53:30880`  |
 | Proxmox (pve1) | `https://192.168.4.210:8006`   |
 | Proxmox (pve2) | `https://192.168.4.211:8006`   |
 | Proxmox (pve3) | `https://192.168.4.212:8006`   |
@@ -202,12 +219,17 @@ k3s-data-platform/
 │   ├── hp-node-3-thermal-fix.md
 │   └── learning-path.md
 ├── platform/                  # infrastructure manifests
+│   ├── airflow/               # orchestration (LocalExecutor + Postgres)
 │   ├── cloudflare/
 │   ├── jenkins/
+│   ├── jupyterhub/            # PySpark notebooks
 │   ├── metallb/
 │   ├── minio/
 │   ├── mongodb/               # shared MongoDB template
-│   └── registry/
+│   ├── postgres/              # shared DB: hive_metastore, airflow, mlflow
+│   ├── registry/
+│   ├── spark/                 # Spark master + worker
+│   └── spark-thrift/          # HiveServer2-compatible SQL endpoint
 ├── manifests/                 # app deployment manifests (ArgoCD watches these)
 │   ├── c4-diagram/
 │   ├── commitments/

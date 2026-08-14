@@ -139,6 +139,19 @@ spec:
             - |
               # Unset k8s-injected service env vars that conflict with Spark's scripts
               unset SPARK_WORKER_PORT SPARK_MASTER_PORT SPARK_MASTER_HOST
+
+              # Download S3A jars so executors can read/write MinIO
+              JARS_DIR=/opt/spark/jars
+              for jar in \
+                "https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar" \
+                "https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar"; do
+                fname=$(basename "$jar")
+                if [ ! -f "$JARS_DIR/$fname" ]; then
+                  echo "Downloading $fname..."
+                  wget -q -O "$JARS_DIR/$fname" "$jar"
+                fi
+              done
+
               /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker \
                 --webui-port 8081 \
                 --memory 2g \

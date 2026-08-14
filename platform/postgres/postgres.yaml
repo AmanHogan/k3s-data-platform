@@ -1,0 +1,126 @@
+# PostgreSQL — shared metastore database for the data platform.
+# Used by: Hive Metastore, Airflow, MLflow.
+#
+# Single-instance with local-path PVC — fine for homelab.
+# Credentials stored in a k8s Secret created out-of-band (never in git).
+#
+# Create the secret first:
+#   kubectl create secret generic postgres-creds \
+#     --namespace data-platform \
+#     --from-literal=POSTGRES_USER=dataplatform \
+#     --from-literal=POSTGRES_PASSWORD=<your-password>
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: data-platform
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: data-platform
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  strategy:
+    type: Recreate  # PVC is ReadWriteOnce
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "dataplatform"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "dataplatform"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-data
+        - name: init-scripts
+          configMap:
+            name: postgres-init
+---
+# Init script: create the databases each service needs
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: data-platform
+data:
+  01-create-databases.sql: |
+    -- Databases for each data platform service
+    CREATE DATABASE hive_metastore;
+    CREATE DATABASE airflow;
+    CREATE DATABASE mlflow;
+
+    -- Grant full access to the platform user on each
+    GRANT ALL PRIVILEGES ON DATABASE hive_metastore TO dataplatform;
+    GRANT ALL PRIVILEGES ON DATABASE airflow TO dataplatform;
+    GRANT ALL PRIVILEGES ON DATABASE mlflow TO dataplatform;
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: data-platform
+  labels:
+    app: postgres
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

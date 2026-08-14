@@ -1,0 +1,233 @@
+# Apache Airflow — job orchestration for the data platform.
+# Standalone deployment: webserver + scheduler in one pod.
+# Uses PostgreSQL as the metadata database.
+# REST API enabled for the frontend Jobs page.
+#
+# DAGs are loaded from a ConfigMap (simple for homelab — no git-sync needed).
+# Add new DAGs by updating the configmap and restarting.
+#
+# Access via NodePort on Tailscale IP:
+#   http://100.112.249.53:30880
+#
+# Create the Airflow user secret first:
+#   kubectl create secret generic airflow-creds \
+#     --namespace data-platform \
+#     --from-literal=AIRFLOW_ADMIN_USER=admin \
+#     --from-literal=AIRFLOW_ADMIN_PASSWORD=<your-password>
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-logs
+  namespace: data-platform
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: airflow-dags
+  namespace: data-platform
+data:
+  # First DAG: CSV → Spark transform → Parquet on MinIO (medallion pattern)
+  medallion_etl.py: |
+    """
+    Medallion ETL — Bronze → Silver → Gold pipeline.
+
+    Submits PySpark jobs to the Spark cluster that:
+    1. Bronze: ingests raw CSV from MinIO raw-data bucket
+    2. Silver: cleans and validates
+    3. Gold: aggregates for analytics
+
+    Schedule: daily at 3am (or manual trigger from the UI).
+    """
+    from datetime import datetime, timedelta
+    from airflow import DAG
+    from airflow.operators.bash import BashOperator
+
+    default_args = {
+        "owner": "data-platform",
+        "depends_on_past": False,
+        "email_on_failure": False,
+        "retries": 1,
+        "retry_delay": timedelta(minutes=5),
+    }
+
+    # Spark Thrift Server JDBC URL (SQL queries run here)
+    THRIFT_URL = "jdbc:hive2://spark-thrift.data-platform.svc.cluster.local:10000"
+
+    with DAG(
+        dag_id="medallion_etl",
+        default_args=default_args,
+        description="Bronze → Silver → Gold medallion ETL pipeline",
+        schedule_interval="0 3 * * *",
+        start_date=datetime(2026, 8, 1),
+        catchup=False,
+        tags=["etl", "medallion", "spark"],
+    ) as dag:
+
+        bronze = BashOperator(
+            task_id="bronze_ingest",
+            bash_command="echo 'Bronze ingest placeholder — will run PySpark via spark-submit'",
+        )
+
+        silver = BashOperator(
+            task_id="silver_transform",
+            bash_command="echo 'Silver transform placeholder — will run PySpark via spark-submit'",
+        )
+
+        gold = BashOperator(
+            task_id="gold_aggregate",
+            bash_command="echo 'Gold aggregate placeholder — will run PySpark via spark-submit'",
+        )
+
+        bronze >> silver >> gold
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow
+  namespace: data-platform
+  labels:
+    app: airflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: airflow
+    spec:
+      containers:
+        - name: airflow
+          image: apache/airflow:2.10.5-python3.11
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              # Set up the DB connection string
+              export AIRFLOW__DATABASE__SQL_ALCHEMY_CONN="postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres.data-platform.svc.cluster.local:5432/airflow"
+
+              # Core config
+              export AIRFLOW__CORE__EXECUTOR=LocalExecutor
+              export AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+              export AIRFLOW__CORE__LOAD_EXAMPLES=False
+
+              # Enable REST API (for the frontend)
+              export AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+
+              # Webserver config
+              export AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+              export AIRFLOW__WEBSERVER__RBAC=True
+
+              # Initialize the database
+              airflow db migrate
+
+              # Create admin user
+              airflow users create \
+                --username "${AIRFLOW_ADMIN_USER}" \
+                --password "${AIRFLOW_ADMIN_PASSWORD}" \
+                --firstname Admin \
+                --lastname User \
+                --role Admin \
+                --email admin@homelab.local 2>/dev/null || true
+
+              # Start scheduler in background, webserver in foreground
+              airflow scheduler &
+              exec airflow webserver --port 8080
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds
+                  key: POSTGRES_PASSWORD
+            - name: AIRFLOW_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-creds
+                  key: AIRFLOW_ADMIN_USER
+            - name: AIRFLOW_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-creds
+                  key: AIRFLOW_ADMIN_PASSWORD
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-root
+                  key: rootUser
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-root
+                  key: rootPassword
+          ports:
+            - containerPort: 8080
+              name: webserver
+          volumeMounts:
+            - name: dags
+              mountPath: /opt/airflow/dags/medallion_etl.py
+              subPath: medallion_etl.py
+            - name: logs
+              mountPath: /opt/airflow/logs
+          resources:
+            requests:
+              cpu: 300m
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          # pip install + db migrate + user creation takes 2-3 minutes on first boot
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 30
+      volumes:
+        - name: dags
+          configMap:
+            name: airflow-dags
+        - name: logs
+          persistentVolumeClaim:
+            claimName: airflow-logs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow
+  namespace: data-platform
+  labels:
+    app: airflow
+spec:
+  type: NodePort
+  selector:
+    app: airflow
+  ports:
+    - name: webserver
+      port: 8080
+      targetPort: 8080
+      nodePort: 30880
