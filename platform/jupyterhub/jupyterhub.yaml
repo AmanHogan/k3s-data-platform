@@ -1,0 +1,147 @@
+# JupyterHub single-user deployment for the k3s data platform.
+# Runs a Jupyter notebook server with PySpark pre-configured to connect
+# to the Spark master and MinIO (S3A).
+#
+# This is a simple single-user setup (not the full JupyterHub multi-user
+# Helm chart) — perfect for a homelab where you're the only user.
+#
+# Access via NodePort on Tailscale IP:
+#   http://100.112.249.53:30888
+#
+# Notebooks are persisted on a PVC so they survive pod restarts.
+# You can also save/load notebooks from MinIO buckets.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jupyter-notebooks
+  namespace: data-platform
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jupyterhub
+  namespace: data-platform
+  labels:
+    app: jupyterhub
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jupyterhub
+  strategy:
+    type: Recreate  # PVC is ReadWriteOnce
+  template:
+    metadata:
+      labels:
+        app: jupyterhub
+    spec:
+      containers:
+        - name: jupyter
+          # Same Spark version as the cluster (3.5.9) with Jupyter installed on top.
+          # Using the official Apache Spark image and installing Jupyter at startup
+          # to guarantee version alignment with spark-master and spark-worker.
+          image: apache/spark:3.5.9-scala2.12-java17-python3-r-ubuntu
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              export HOME=/tmp/jupyter-home
+              export PATH=$HOME/.local/bin:$PATH
+              export SPARK_HOME=/opt/spark
+              export PYTHONPATH=$SPARK_HOME/python:$SPARK_HOME/python/lib/py4j-0.10.9.7-src.zip:$PYTHONPATH
+              mkdir -p $HOME /tmp/jupyter-work
+              pip install --quiet --user jupyter notebook pandas numpy matplotlib boto3 && \
+              cd /tmp/jupyter-work && \
+              jupyter notebook \
+                --ip=0.0.0.0 \
+                --port=8888 \
+                --no-browser \
+                --allow-root \
+                --NotebookApp.token='' \
+                --NotebookApp.password='' \
+                --NotebookApp.allow_origin='*' \
+                --notebook-dir=/tmp/jupyter-work
+          env:
+            # Connect to the Spark standalone master
+            - name: SPARK_MASTER
+              value: spark://spark-master.data-platform.svc.cluster.local:7077
+            # Pod IP so Spark executors can call back to the driver
+            - name: SPARK_DRIVER_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: SPARK_DRIVER_PORT
+              value: "45083"
+            # MinIO S3A config — available in notebook sessions
+            - name: MINIO_ENDPOINT
+              value: http://minio.data-platform.svc.cluster.local:9000
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-root
+                  key: rootUser
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-root
+                  key: rootPassword
+            # Disable token auth for homelab (Tailscale-only access)
+            - name: JUPYTER_TOKEN
+              value: ""
+            # Grant sudo so you can pip install in the container
+            - name: GRANT_SUDO
+              value: "yes"
+          ports:
+            - containerPort: 8888
+              name: notebook
+          volumeMounts:
+            - name: notebooks
+              mountPath: /tmp/jupyter-work
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          # Jupyter can take a moment to start
+          readinessProbe:
+            httpGet:
+              path: /api
+              port: 8888
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api
+              port: 8888
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: notebooks
+          persistentVolumeClaim:
+            claimName: jupyter-notebooks
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jupyterhub
+  namespace: data-platform
+  labels:
+    app: jupyterhub
+spec:
+  type: NodePort
+  selector:
+    app: jupyterhub
+  ports:
+    - name: notebook
+      port: 8888
+      targetPort: 8888
+      nodePort: 30888
