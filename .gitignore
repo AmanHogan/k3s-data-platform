@@ -3,3 +3,7 @@
 *.swo
 .env
 .env.local
+
+# local-only credentials reference (never commit; local convenience file)
+HOMELAB-ACCESS.md
+
