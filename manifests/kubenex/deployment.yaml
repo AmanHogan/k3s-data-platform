@@ -26,6 +26,33 @@ spec:
               value: "spark-thrift.data-platform.svc.cluster.local"
             - name: THRIFT_PORT
               value: "10000"
+            - name: THRIFT_PROXY_URL
+              value: "http://sql-gateway.data-platform.svc.cluster.local:8080"
+            - name: SPARK_MASTER_URL
+              value: "http://spark-master.data-platform.svc.cluster.local:8080"
+            - name: AIRFLOW_URL
+              value: "http://airflow.data-platform.svc.cluster.local:8080"
+            - name: AIRFLOW_USER
+              value: "admin"
+            - name: AIRFLOW_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kubenex-secrets
+                  key: AIRFLOW_PASSWORD
+            - name: JUPYTER_URL
+              value: "http://jupyterhub.data-platform.svc.cluster.local:8000"
+            - name: MINIO_ENDPOINT
+              value: "http://minio.data-platform.svc.cluster.local:9000"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kubenex-secrets
+                  key: MINIO_ACCESS_KEY
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kubenex-secrets
+                  key: MINIO_SECRET_KEY
             - name: NEXT_PUBLIC_JUPYTER_URL
               value: "http://100.112.249.53:30888"
             - name: NEXT_PUBLIC_SPARK_UI_URL
