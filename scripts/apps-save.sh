@@ -89,5 +89,15 @@ helm list -A -o json | jq -c '.[]' | while read -r rel; do
   echo "  helm:   $name ($chart)"
 done
 
+# Cloudflare public hostnames. These live in the Cloudflare dashboard, not in
+# the cluster, so record them from cloudflared's last config update. Restoring
+# them is manual: Zero Trust -> Networks -> Tunnels -> Public Hostnames.
+kubectl logs -n cloudflare deploy/cloudflared --tail=5000 2>/dev/null \
+  | grep "Updated to new configuration" | tail -1 \
+  | sed -E 's/.*config="(.*)" version=.*/\1/; s/\\"/"/g' \
+  | jq '[.ingress[] | select(.hostname) | {hostname, service}]' \
+  > "$OUT/cloudflare-routes.json" 2>/dev/null || echo "[]" > "$OUT/cloudflare-routes.json"
+echo "  cloudflare: $(jq -r 'map(.hostname) | join(", ")' "$OUT/cloudflare-routes.json")"
+
 ln -sfn "$OUT" "$ROOT/apps-latest"
 echo "Done. Latest save: $ROOT/apps-latest"
