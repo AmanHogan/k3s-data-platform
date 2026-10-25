@@ -214,6 +214,23 @@ kubectl create token headlamp-admin -n kube-system --duration=8760h
 
 Update `HOMELAB-ACCESS.md` with the new values.
 
+## Tear down or restore only the project apps
+
+The project apps (kubenex, tracker, proxmox-visualizer, c4-diagram,
+commitments, data-platform, portfolio) can be removed and restored without
+touching the infrastructure. The list lives in `scripts/apps.conf`.
+
+```bash
+scripts/apps-save.sh    # save them exactly as they run now (no data)
+scripts/apps-down.sh    # save, then delete them; asks you to type "yes"
+scripts/apps-up.sh      # bring them back from the latest save
+```
+
+Saves go to `~/homelab-archive/apps-<timestamp>/`. They come straight from the
+live cluster, so they also capture things that were never committed to git.
+Add `DRY_RUN=1` in front of `apps-down.sh` or `apps-up.sh` to see what
+would happen without changing anything.
+
 ## Keep the archive current
 
 Run this after any change to secrets, Helm values, or node config:
