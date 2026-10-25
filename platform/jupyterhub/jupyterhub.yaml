@@ -61,6 +61,31 @@ spec:
               echo "spark.jars.ivy $HOME/.ivy2" > /tmp/spark-conf/spark-defaults.conf
               echo "spark.local.dir /tmp/spark-local" >> /tmp/spark-conf/spark-defaults.conf
               mkdir -p $HOME /tmp/jupyter-work
+              mkdir -p $HOME/.ipython/profile_default/startup
+              cat > $HOME/.ipython/profile_default/startup/00-spark-session.py << 'PYEOF'
+              # Auto-run for every new kernel so `spark` is ready without
+              # pasting the SparkSession boilerplate into each notebook.
+              # Same config as starter-notebook.ipynb's first cell.
+              import os
+              from pyspark.sql import SparkSession
+
+              spark = SparkSession.builder \
+                  .appName("Kubenex-Notebook") \
+                  .master(os.environ.get("SPARK_MASTER", "local[*]")) \
+                  .config("spark.driver.host", os.environ.get("SPARK_DRIVER_HOST", "localhost")) \
+                  .config("spark.driver.port", os.environ.get("SPARK_DRIVER_PORT", "45083")) \
+                  .config("spark.driver.bindAddress", "0.0.0.0") \
+                  .config("spark.executor.memory", "512m") \
+                  .config("spark.hadoop.fs.s3a.endpoint", os.environ["MINIO_ENDPOINT"]) \
+                  .config("spark.hadoop.fs.s3a.access.key", os.environ["MINIO_ACCESS_KEY"]) \
+                  .config("spark.hadoop.fs.s3a.secret.key", os.environ["MINIO_SECRET_KEY"]) \
+                  .config("spark.hadoop.fs.s3a.path.style.access", "true") \
+                  .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+                  .config("spark.jars.packages", "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262") \
+                  .getOrCreate()
+
+              print(f"Spark session ready — v{spark.version}, master={spark.sparkContext.master}")
+              PYEOF
               pip install --quiet --user jupyter notebook pandas numpy matplotlib boto3 && \
               cd /tmp/jupyter-work && \
               jupyter notebook \

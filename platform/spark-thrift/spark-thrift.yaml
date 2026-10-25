@@ -10,6 +10,13 @@
 #
 # The frontend's SQL Editor and Data Catalog query through here.
 #
+# spark.cores.max=1: the single spark-worker only has 2 cores total. Spark
+# standalone apps grab ALL available cores by default and hold them for
+# their entire lifetime — since this Thrift Server runs continuously, an
+# uncapped instance starves every other Spark application (e.g. notebook
+# SparkSessions) of any executor at all. Capping it to 1 core leaves 1
+# free for everything else, at the cost of some SQL Editor throughput.
+#
 # JDBC URL (from within the cluster):
 #   jdbc:hive2://spark-thrift.data-platform.svc.cluster.local:10000
 #
@@ -60,6 +67,7 @@ spec:
               echo "Starting Spark Thrift Server..."
               /opt/spark/sbin/start-thriftserver.sh \
                 --master spark://spark-master.data-platform.svc.cluster.local:7077 \
+                --conf spark.cores.max=1 \
                 --conf spark.driver.host=$(hostname -i) \
                 --conf spark.driver.bindAddress=0.0.0.0 \
                 --conf spark.executor.memory=512m \
