@@ -8,8 +8,19 @@
 # and can be reached over the LAN/Tailscale-subnet-router later.
 
 controller:
-  # The default installPlugins already includes: kubernetes, workflow-aggregator,
-  # git, configuration-as-code, git-client. Add what we need on top:
+  # The chart's default list, except configuration-as-code. Dependencies always
+  # resolve to their latest version; in Oct 2026 the latest `credentials` needed
+  # configuration-as-code 2117+, and the chart's pinned 2082 made the init
+  # container crash-loop. Bump this pin if that error comes back.
+  installPlugins:
+    - kubernetes:4423.vb_59f230b_ce53
+    - workflow-aggregator:608.v67378e9d3db_1
+    - git:5.10.1
+    - configuration-as-code:2117.vc05a_0b_e6b_f4e
+  # Install plugins on first start only; they then live on the PVC. Without this,
+  # every pod restart re-downloads plugins, and any upstream release can break a
+  # reboot. To upgrade plugins later, use the Jenkins UI.
+  initializeOnce: true
   additionalPlugins:
     - docker-workflow          # build/push Docker images from pipelines
     - credentials-binding      # bind GitHub/registry creds in pipelines

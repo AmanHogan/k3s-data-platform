@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stream
+  namespace: stream
+  labels: {app: stream}
+spec:
+  replicas: 1
+  # One SQLite file and one node-local volume: never run two pods at once.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: stream}
+  template:
+    metadata:
+      labels: {app: stream}
+    spec:
+      # Videos live on this node's disk. It has the most free space and CPU.
+      nodeSelector:
+        kubernetes.io/hostname: k3s-agent-2
+      containers:
+        - name: app
+          image: 192.168.4.245:5001/stream-kubenex:0.4.0
+          ports: [{containerPort: 8000}]
+          env:
+            - {name: PUBLIC_BASE_URL, value: "http://192.168.4.247"}
+            - {name: MIN_FREE_GB, value: "15"}
+            # Impersonate a browser's TLS fingerprint. Empty "" turns it off.
+            - {name: IMPERSONATE, value: "chrome"}
+            # Token for the web form and the browser extension. See secret.example.yaml.
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef: {name: stream-api, key: token}
+          volumeMounts: [{name: data, mountPath: /data}]
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports: [{containerPort: 80}]
+          volumeMounts:
+            - {name: data, mountPath: /data, readOnly: true}
+            - {name: nginx-conf, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf}
+          resources:
+            requests: {cpu: 50m, memory: 32Mi}
+            limits: {memory: 128Mi}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: stream-data}
+        - name: nginx-conf
+          configMap: {name: stream-nginx}

@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stream-nginx
+  namespace: stream
+data:
+  default.conf: |
+    server {
+      listen 80;
+
+      # Video files, straight from disk. nginx answers Range requests itself,
+      # which is what lets the Roku seek.
+      location /media/ {
+        alias /data/media/;
+        sendfile on;
+        tcp_nopush on;
+        # Hide yt-dlp's in-progress files.
+        location ~ \.(part|ytdl)$ { return 404; }
+      }
+
+      # Video imports. Stream the body to the app as it arrives: nginx's own disk is
+      # small and /data is read-only here. The app checks the free disk itself.
+      location /api/uploads {
+        client_max_body_size 100g;
+        proxy_request_buffering off;
+        client_body_timeout 300s;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+      }
+
+      location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+      }
+    }

@@ -190,8 +190,15 @@ kubectl apply -f argocd-apps/
 ArgoCD syncs each app from git. **The app pods stay in `ImagePullBackOff`
 until their images are rebuilt**, because the new registry is empty. Rebuild
 each image (`kubenex`, `commitments`, `c4-diagram`, `proxmox-visualizer`,
-`tracker`) with its Jenkins pipeline, or build and push it from the Mac. The
-tags must match `manifests/<app>/deployment.yaml`.
+`tracker`, `stream-kubenex`) with its Jenkins pipeline, or build and push it
+from the Mac. The tags must match `manifests/<app>/deployment.yaml`.
+
+`stream-kubenex` also needs its API token Secret before its pod can start
+(see `manifests/stream-kubenex/secret.yaml.example`):
+
+```bash
+kubectl create secret generic stream-api -n stream --from-literal=token="$(openssl rand -hex 32)"
+```
 
 Jenkins starts fresh: re-add the GitHub credentials and pipeline jobs
 (`setup-log.md` Phase 2).

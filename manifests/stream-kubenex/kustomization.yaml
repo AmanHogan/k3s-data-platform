@@ -1,0 +1,12 @@
+# Synced by ArgoCD (argocd-apps/stream-kubenex.yaml). Jenkins in the stream-kubenex
+# repo bumps the image tag in deployment.yaml; do not hand-edit that line.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - pvc.yaml
+  - nginx-configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - networkpolicy.yaml
+# The stream-api Secret is created by hand (see secret.yaml.example), never from git.

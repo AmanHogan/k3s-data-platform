@@ -1,0 +1,31 @@
+# The downloader fetches URLs that people send it. This policy lets the pod reach
+# DNS and the public internet only. It cannot reach the LAN (Proxmox, router), the
+# cluster (ArgoCD, other pods, services) or Tailscale peers, even through a redirect
+# or a DNS trick that the app's own check misses. Ingress is not restricted.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: stream-egress
+  namespace: stream
+spec:
+  podSelector:
+    matchLabels: {app: stream}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8        # cluster pods (10.42) and services (10.43)
+              - 172.16.0.0/12
+              - 192.168.0.0/16    # home LAN
+              - 100.64.0.0/10     # Tailscale
+              - 169.254.0.0/16    # link-local

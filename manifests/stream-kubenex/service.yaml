@@ -1,0 +1,12 @@
+# LAN address for the Roku (it cannot use Tailscale). Same style as the registry service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: stream
+  namespace: stream
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.4.247
+  selector: {app: stream}
+  ports:
+    - {name: http, port: 80, targetPort: 80}

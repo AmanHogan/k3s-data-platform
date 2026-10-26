@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stream
+  annotations:
+    # Deleting the namespace would delete the PVC and the stream-api Secret too.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false

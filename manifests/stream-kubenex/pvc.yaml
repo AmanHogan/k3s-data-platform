@@ -1,0 +1,18 @@
+# local-path stores data on the node's own disk, under /var/lib/rancher/k3s/storage.
+# The size is not enforced; the app's MIN_FREE_GB check protects the node instead.
+# WARNING: reclaim policy is Delete. Deleting this PVC deletes every video.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: stream-data
+  namespace: stream
+  annotations:
+    # ArgoCD never deletes this PVC: not when it leaves git (Prune=false), and not
+    # when the Application is deleted (Delete=false). Losing it loses every video.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 50Gi

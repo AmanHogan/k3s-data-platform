@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: stream-kubenex
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/AmanHogan/k3s-data-platform.git
+    targetRevision: master
+    path: manifests/stream-kubenex
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: stream
+  syncPolicy:
+    automated:
+      # Prune is safe here: the namespace and PVC carry Prune=false,Delete=false,
+      # and the stream-api Secret is not in git, so ArgoCD never tracks it.
+      prune: true
+      selfHeal: true
