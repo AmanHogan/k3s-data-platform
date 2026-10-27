@@ -1,0 +1,46 @@
+# Videos on the external SanDisk SSD (1 TB), passed through from pve3 to
+# k3s-agent-2 and mounted there at /mnt/stream-media (fstab, nofail).
+#
+# Safety: the `stream` folder exists only on the drive. If the drive did not
+# mount, /mnt/stream-media is an empty folder on the VM's own disk, the path
+# below is missing, and the kubelet refuses to start the pod. Videos can never
+# fill the VM disk (a 141 GB thin pool on pve3) by mistake.
+#
+# Retain: deleting the PVC or this PV in Kubernetes never deletes the videos.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: stream-media
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  capacity:
+    storage: 900Gi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  local:
+    path: /mnt/stream-media/stream
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [k3s-agent-2]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: stream-media
+  namespace: stream
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  # "" turns off the default local-path class; volumeName binds to the PV above.
+  storageClassName: ""
+  volumeName: stream-media
+  resources:
+    requests:
+      storage: 900Gi

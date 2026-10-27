@@ -200,6 +200,11 @@ from the Mac. The tags must match `manifests/<app>/deployment.yaml`.
 kubectl create secret generic stream-api -n stream --from-literal=token="$(openssl rand -hex 32)"
 ```
 
+`stream-kubenex` keeps its videos on an external SSD attached to pve3 and passed
+through to k3s-agent-2 (`scsi1`, by-id path), mounted at `/mnt/stream-media` via
+fstab with `nofail`. The pod only starts if `/mnt/stream-media/stream` exists,
+which it does only when the drive is mounted (`manifests/stream-kubenex/media-volume.yaml`).
+
 Jenkins starts fresh: re-add the GitHub credentials and pipeline jobs
 (`setup-log.md` Phase 2).
 

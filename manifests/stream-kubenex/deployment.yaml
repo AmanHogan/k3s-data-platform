@@ -14,7 +14,7 @@ spec:
     metadata:
       labels: {app: stream}
     spec:
-      # Videos live on this node's disk. It has the most free space and CPU.
+      # The video drive is attached to this node (see media-volume.yaml).
       nodeSelector:
         kubernetes.io/hostname: k3s-agent-2
       containers:
@@ -49,6 +49,6 @@ spec:
             limits: {memory: 128Mi}
       volumes:
         - name: data
-          persistentVolumeClaim: {claimName: stream-data}
+          persistentVolumeClaim: {claimName: stream-media}
         - name: nginx-conf
           configMap: {name: stream-nginx}

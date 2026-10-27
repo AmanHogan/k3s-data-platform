@@ -4,7 +4,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - namespace.yaml
+  # Old volume on the VM disk (local-path). No longer mounted; kept as a backup
+  # until the drive has run for a while. To retire it: remove this line, then
+  # `kubectl delete pvc stream-data -n stream` (Prune=false stops ArgoCD doing it).
   - pvc.yaml
+  - media-volume.yaml
   - nginx-configmap.yaml
   - deployment.yaml
   - service.yaml
