@@ -19,7 +19,7 @@ spec:
         kubernetes.io/hostname: k3s-agent-2
       containers:
         - name: app
-          image: 192.168.4.245:5001/stream-kubenex:3-deaa46b
+          image: 192.168.4.245:5001/stream-kubenex:4-db01817
           ports: [{containerPort: 8000}]
           env:
             - {name: PUBLIC_BASE_URL, value: "http://192.168.4.247"}
