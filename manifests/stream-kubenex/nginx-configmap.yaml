@@ -14,6 +14,14 @@ data:
         alias /data/media/;
         sendfile on;
         tcp_nopush on;
+        # nginx's default list has no WebVTT. A types block replaces the whole
+        # list for this location, so it names everything served from here.
+        types {
+          video/mp4  mp4;
+          image/jpeg jpg jpeg;
+          text/vtt   vtt;
+        }
+        default_type application/octet-stream;
         # Hide yt-dlp's in-progress files.
         location ~ \.(part|ytdl)$ { return 404; }
       }
