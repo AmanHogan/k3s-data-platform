@@ -19,6 +19,7 @@ data:
         types {
           video/mp4  mp4;
           image/jpeg jpg jpeg;
+          image/png  png;
           text/vtt   vtt;
         }
         default_type application/octet-stream;
