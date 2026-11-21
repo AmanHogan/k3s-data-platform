@@ -36,8 +36,10 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
           resources:
-            requests: {cpu: 100m, memory: 256Mi}
-            limits: {memory: 1Gi}
+            requests: {cpu: 100m, memory: 512Mi}
+            # ffmpeg peaks above 1Gi on 10-bit HDR Blu-ray rips (HEVC decode + tone map +
+            # x264); at 1Gi the kernel killed it mid-import. The node has ~4 GiB free.
+            limits: {memory: 3Gi}
         - name: nginx
           image: nginx:1.27-alpine
           ports: [{containerPort: 80}]
